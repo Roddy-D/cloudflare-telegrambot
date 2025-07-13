@@ -56,7 +56,7 @@
 ### 部署步骤
 
 1. **登录 Cloudflare**
-   - 访问 [Cloudflare Workers](https://workers.cloudflare.com/)
+   - 访问 [Cloudflare](https://dash.cloudflare.com/)
    - 登录你的 Cloudflare 账户
 
 2. **创建 Worker**
