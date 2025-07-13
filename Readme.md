@@ -78,9 +78,9 @@
    
    **选填变量：**
    - `ENV_WELCOME_MESSAGE`：欢迎消息，自行修改，默认为 欢迎使用机器人
-   - `ENV_MESSAGE_INTERVAL`：消息间隔限制秒数，默认为 1。-1为不限制。
+   - `ENV_MESSAGE_INTERVAL`：消息间隔限制秒数，默认为 1。-1为不限制
    - `ENV_DELETE_USER_MESSAGES`：清理话题时删除用户消息（true/false），默认为 false
-   - `ENV_DELETE_TOPIC_AS_BAN`：删除话题视为永久封禁（true/false），默认为 false
+   - `ENV_DELETE_TOPIC_AS_BAN`：删除话题视为永久封禁（true/false），默认为 false。false 时只会删除话题，对方只需要再发送一次消息即可再次新建话题
 
 4. **创建 KV 数据库**
    - 在 Cloudflare 控制台中创建一个 KV Namespace（在存储和数据库中）
@@ -124,8 +124,8 @@
    - `/checkblock`：检查用户屏蔽状态（回复机器人消息使用）
 
 3. **话题管理**（另一种封禁/屏蔽方式，更便捷，无需输入）
-   - 关闭话题：用户无法发送消息
-   - 重新打开话题：用户可以继续发送消息
+   - 关闭话题：用户无法发送消息，即屏蔽
+   - 重新打开话题：用户可以继续发送消息，即解除屏蔽
    - 删除话题：根据配置决定是否永久封禁用户
 
 
