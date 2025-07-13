@@ -93,7 +93,7 @@
    - 点击 "部署"
 
 6. **注册 Webhook**
-   - 访问 `https://your-worker-name.your-account.workers.dev/registerWebhook`（访问自己的 'https://xxx.workers.dev/registerWebhook' ，不是复制）
+   - 访问 `https://your-worker-name.your-account.workers.dev/registerWebhook`（访问自己的 `https://xxx.workers.dev/registerWebhook` ，不是复制）
    - 看到 "Ok" 表示注册成功
 
 ## 📖 使用指南
