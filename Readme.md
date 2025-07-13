@@ -169,3 +169,12 @@
 - 在 Cloudflare Workers 控制台查看实时日志
 - 日志包含详细的错误信息和调试信息
 - 可用于排查问题和监控运行状态
+
+## 🙏 致谢
+
+- [telegram-bot-cloudflare](https://github.com/cvzi/telegram-bot-cloudflare) - 基础架构参考
+- https://github.com/LloydAsp/nfd - 思路参考 & README参考
+- Cloudflare Workers 团队 - 提供优秀的无服务器平台
+- Telegram Bot API - 提供强大的机器人开发接口
+  
+**注意**：本项目仅供学习和研究使用，请遵守相关法律法规和平台使用条款。本项目全权由cursor——Claude-4-sonnet编写，本人仅做测试。
