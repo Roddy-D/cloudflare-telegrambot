@@ -4,7 +4,7 @@ const WEBHOOK = '/endpoint'
 const SECRET = (typeof ENV_BOT_SECRET !== 'undefined') ? ENV_BOT_SECRET : null // A-Z, a-z, 0-9, _ and -
 const ADMIN_UID = (typeof ENV_ADMIN_UID !== 'undefined') ? ENV_ADMIN_UID : null // 管理员用户 ID
 const ADMIN_GROUP_ID = (typeof ENV_ADMIN_GROUP_ID !== 'undefined') ? ENV_ADMIN_GROUP_ID : null // 管理群组 ID (必须是开启话题的超级群组)
-const APP_NAME = (typeof ENV_APP_NAME !== 'undefined') ? ENV_APP_NAME : 'messagebot' // 应用名称
+// === 选填变量 ===
 const WELCOME_MESSAGE = (typeof ENV_WELCOME_MESSAGE !== 'undefined') ? ENV_WELCOME_MESSAGE : '欢迎使用机器人' // 欢迎消息
 const DISABLE_CAPTCHA = (typeof ENV_DISABLE_CAPTCHA !== 'undefined') ? ENV_DISABLE_CAPTCHA !== 'false' : true // 是否禁用人机验证（默认禁用）
 const MESSAGE_INTERVAL = (typeof ENV_MESSAGE_INTERVAL !== 'undefined') ? parseInt(ENV_MESSAGE_INTERVAL) || 1 : 1 // 消息间隔限制（秒）
@@ -276,26 +276,42 @@ function delay(ms) {
  * 用户数据库更新
  */
 async function updateUserDb(user) {
-  const existingUser = await db.getUser(user.id)
-  if (existingUser) {
-    // 更新现有用户信息
-    existingUser.first_name = user.first_name || '未知'
-    existingUser.last_name = user.last_name
-    existingUser.username = user.username
-    existingUser.updated_at = Date.now()
-    await db.setUser(user.id, existingUser)
-  } else {
-    // 创建新用户
-    const newUser = {
-      user_id: user.id,
-      first_name: user.first_name || '未知',
-      last_name: user.last_name,
-      username: user.username,
-      message_thread_id: null,
-      created_at: Date.now(),
-      updated_at: Date.now()
+  try {
+    const existingUser = await db.getUser(user.id)
+    if (existingUser) {
+      // 更新现有用户信息
+      existingUser.first_name = user.first_name || '未知'
+      existingUser.last_name = user.last_name
+      existingUser.username = user.username
+      existingUser.updated_at = Date.now()
+      await db.setUser(user.id, existingUser)
+    } else {
+      // 创建新用户
+      const newUser = {
+        user_id: user.id,
+        first_name: user.first_name || '未知',
+        last_name: user.last_name,
+        username: user.username,
+        message_thread_id: null,
+        created_at: Date.now(),
+        updated_at: Date.now()
+      }
+      await db.setUser(user.id, newUser)
     }
-    await db.setUser(user.id, newUser)
+  } catch (error) {
+    console.error('Error updating user database:', error)
+    
+    // 检查是否是 KV 写入限制错误
+    if (isKVWriteLimitError(error)) {
+      // 获取用户现有数据以确定是否已有话题
+      const user_data = await db.getUser(user.id).catch(() => null)
+      const message_thread_id = user_data?.message_thread_id || null
+      
+      await handleKVLimitError(user, message_thread_id)
+    }
+    
+    // 重新抛出错误以便上层处理
+    throw error
   }
 }
 
@@ -575,75 +591,124 @@ async function handleMediaGroup(message, chat_id, target_id, direction) {
     return await handleSingleMediaMessage(message, chat_id, target_id, direction)
   }
   
-  // 添加到媒体组
-  await db.addToMediaGroup(media_group_id, chat_id, message.message_id, message.caption)
-  
-  // 使用KV的原子操作来确保只有一个延迟任务
-  const lockKey = `media_lock:${media_group_id}:${chat_id}`
-  const EXTENDED_DELAY = 5000 // 5秒延迟
-  
   try {
-    // 尝试获取锁（如果不存在则创建，存在则返回现有值）
-    const existingLock = await horrKV.get(lockKey)
+    // 添加到媒体组
+    await db.addToMediaGroup(media_group_id, chat_id, message.message_id, message.caption)
     
-    if (!existingLock) {
-      // 设置锁，过期时间为延迟时间的2倍
-      await horrKV.put(lockKey, JSON.stringify({
-        created_at: Date.now(),
-        message_id: message.message_id
-      }), { expirationTtl: Math.ceil(EXTENDED_DELAY / 1000) * 2 })
+    // 使用KV的原子操作来确保只有一个延迟任务
+    const lockKey = `media_lock:${media_group_id}:${chat_id}`
+    const EXTENDED_DELAY = 5000 // 5秒延迟
+    
+    try {
+      // 尝试获取锁（如果不存在则创建，存在则返回现有值）
+      const existingLock = await horrKV.get(lockKey)
       
-      // 创建延迟Promise
-      const delayedSend = delay(EXTENDED_DELAY).then(async () => {
-        try {
-          // 获取所有消息
-          const mediaMessages = await db.getMediaGroup(media_group_id, chat_id)
-          
-          if (mediaMessages.length === 0) {
-            console.warn(`No messages found for media group ${media_group_id}`)
-            return
-          }
-          
-          // 按时间戳排序，确保顺序正确
-          mediaMessages.sort((a, b) => a.timestamp - b.timestamp)
-          
-          // 转发所有消息
-          let successCount = 0
-          for (const mediaMsg of mediaMessages) {
-            const result = await handleSingleMediaMessage(
-              { message_id: mediaMsg.message_id, media_group_id, caption: mediaMsg.caption },
-              chat_id,
-              target_id,
-              direction
-            )
+      if (!existingLock) {
+        // 设置锁，过期时间为延迟时间的2倍
+        await horrKV.put(lockKey, JSON.stringify({
+          created_at: Date.now(),
+          message_id: message.message_id
+        }), { expirationTtl: Math.ceil(EXTENDED_DELAY / 1000) * 2 })
+        
+        // 创建延迟Promise
+        const delayedSend = delay(EXTENDED_DELAY).then(async () => {
+          try {
+            // 获取所有消息
+            const mediaMessages = await db.getMediaGroup(media_group_id, chat_id)
             
-            if (result) {
-              successCount++
+            if (mediaMessages.length === 0) {
+              console.warn(`No messages found for media group ${media_group_id}`)
+              return
             }
             
-            // 消息间稍微延迟，避免速率限制
-            await delay(100)
+            // 按时间戳排序，确保顺序正确
+            mediaMessages.sort((a, b) => a.timestamp - b.timestamp)
+            
+            // 转发所有消息
+            let successCount = 0
+            for (const mediaMsg of mediaMessages) {
+              const result = await handleSingleMediaMessage(
+                { message_id: mediaMsg.message_id, media_group_id, caption: mediaMsg.caption },
+                chat_id,
+                target_id,
+                direction
+              )
+              
+              if (result) {
+                successCount++
+              }
+              
+              // 消息间稍微延迟，避免速率限制
+              await delay(100)
+            }
+            
+            console.log(`Sent media group ${media_group_id}: ${successCount}/${mediaMessages.length} messages`)
+            
+          } catch (error) {
+            console.error(`Error in delayed send for media group ${media_group_id}:`, error)
+          } finally {
+            // 清理
+            await db.clearMediaGroup(media_group_id, chat_id)
+            await horrKV.delete(lockKey)
           }
-          
-          console.log(`Sent media group ${media_group_id}: ${successCount}/${mediaMessages.length} messages`)
-          
-        } catch (error) {
-          console.error(`Error in delayed send for media group ${media_group_id}:`, error)
-        } finally {
-          // 清理
-          await db.clearMediaGroup(media_group_id, chat_id)
-          await horrKV.delete(lockKey)
-        }
-      })
+        })
+        
+        return delayedSend
+      } else {
+        return null
+      }
       
-      return delayedSend
-    } else {
-      return null
+    } catch (error) {
+      console.error(`Error handling media group ${media_group_id}:`, error)
+      // 如果出错，fallback到单独转发
+      return await handleSingleMediaMessage(message, chat_id, target_id, direction)
     }
     
   } catch (error) {
-    console.error(`Error handling media group ${media_group_id}:`, error)
-    // 如果出错，fallback到单独转发
+    console.error(`Error in handleMediaGroup for ${media_group_id}:`, error)
+    
+    // 检查是否是 KV 写入限制错误
+    if (isKVWriteLimitError(error)) {
+      // 获取用户信息
+      let user = null
+      if (direction === 'u2a') {
+        // 用户到管理员，从message获取用户信息
+        user = { id: chat_id, first_name: '未知', username: null }
+        // 尝试获取更详细的用户信息
+        try {
+          const user_data = await db.getUser(chat_id)
+          if (user_data) {
+            user = {
+              id: user_data.user_id,
+              first_name: user_data.first_name,
+              username: user_data.username
+            }
+          }
+        } catch (getUserError) {
+          console.error('Error getting user data for KV limit handling:', getUserError)
+        }
+        
+        const message_thread_id = user_data?.message_thread_id || null
+        await handleKVLimitError(user, message_thread_id)
+      } else {
+        // 管理员到用户，从target_id获取用户信息
+        try {
+          const user_data = await db.getUser(target_id)
+          if (user_data) {
+            user = {
+              id: user_data.user_id,
+              first_name: user_data.first_name,
+              username: user_data.username
+            }
+            await handleKVLimitError(user, user_data.message_thread_id)
+          }
+        } catch (getUserError) {
+          console.error('Error getting user data for KV limit handling:', getUserError)
+        }
+      }
+    }
+    
+    // fallback到单独转发
     return await handleSingleMediaMessage(message, chat_id, target_id, direction)
   }
 }
@@ -654,46 +719,90 @@ async function handleMediaGroup(message, chat_id, target_id, direction) {
 async function handleSingleMediaMessage(message, chat_id, target_id, direction) {
   const params = {}
   
-  // 处理回复消息
-  if (message.reply_to_message) {
-    const mapKey = direction === 'u2a' ? `u2a:${message.reply_to_message.message_id}` : `a2u:${message.reply_to_message.message_id}`
-    const originalId = await db.getMessageMap(mapKey)
-    if (originalId) {
-      params.reply_to_message_id = originalId
-    }
-  }
-  
-  // 设置话题ID（用户到管理员时需要）
-  if (direction === 'u2a') {
-    const user = await db.getUser(chat_id)
-    if (!user || !user.message_thread_id) {
-      console.warn(`User ${chat_id} or their topic not found`)
-      return
-    }
-    params.message_thread_id = user.message_thread_id
-  }
-  
   try {
-    const sent = await copyMessage({
-      chat_id: target_id,
-      from_chat_id: chat_id,
-      message_id: message.message_id,
-      ...params
-    })
+    // 处理回复消息
+    if (message.reply_to_message) {
+      const mapKey = direction === 'u2a' ? `u2a:${message.reply_to_message.message_id}` : `a2u:${message.reply_to_message.message_id}`
+      const originalId = await db.getMessageMap(mapKey)
+      if (originalId) {
+        params.reply_to_message_id = originalId
+      }
+    }
     
-    if (sent.ok) {
-      // 建立消息映射
-      await db.setMessageMap(`${direction}:${message.message_id}`, sent.result.message_id)
-      const reverse_direction = direction === 'u2a' ? 'a2u' : 'u2a'
-      await db.setMessageMap(`${reverse_direction}:${sent.result.message_id}`, message.message_id)
+    // 设置话题ID（用户到管理员时需要）
+    if (direction === 'u2a') {
+      const user = await db.getUser(chat_id)
+      if (!user || !user.message_thread_id) {
+        console.warn(`User ${chat_id} or their topic not found`)
+        return
+      }
+      params.message_thread_id = user.message_thread_id
+    }
+    
+    try {
+      const sent = await copyMessage({
+        chat_id: target_id,
+        from_chat_id: chat_id,
+        message_id: message.message_id,
+        ...params
+      })
       
-      return sent.result
-    } else {
-      console.error(`Failed to forward ${direction}: msg(${message.message_id})`, sent)
+      if (sent.ok) {
+        // 建立消息映射
+        await db.setMessageMap(`${direction}:${message.message_id}`, sent.result.message_id)
+        const reverse_direction = direction === 'u2a' ? 'a2u' : 'u2a'
+        await db.setMessageMap(`${reverse_direction}:${sent.result.message_id}`, message.message_id)
+        
+        return sent.result
+      } else {
+        console.error(`Failed to forward ${direction}: msg(${message.message_id})`, sent)
+        return null
+      }
+    } catch (error) {
+      console.error(`Error forwarding ${direction}: msg(${message.message_id})`, error)
       return null
     }
+    
   } catch (error) {
-    console.error(`Error forwarding ${direction}: msg(${message.message_id})`, error)
+    console.error(`Error in handleSingleMediaMessage for ${direction}: msg(${message.message_id})`, error)
+    
+    // 检查是否是 KV 写入限制错误
+    if (isKVWriteLimitError(error)) {
+      // 获取用户信息
+      let user = null
+      if (direction === 'u2a') {
+        // 用户到管理员，从chat_id获取用户信息
+        try {
+          const user_data = await db.getUser(chat_id)
+          if (user_data) {
+            user = {
+              id: user_data.user_id,
+              first_name: user_data.first_name,
+              username: user_data.username
+            }
+            await handleKVLimitError(user, user_data.message_thread_id)
+          }
+        } catch (getUserError) {
+          console.error('Error getting user data for KV limit handling:', getUserError)
+        }
+      } else {
+        // 管理员到用户，从target_id获取用户信息
+        try {
+          const user_data = await db.getUser(target_id)
+          if (user_data) {
+            user = {
+              id: user_data.user_id,
+              first_name: user_data.first_name,
+              username: user_data.username
+            }
+            await handleKVLimitError(user, user_data.message_thread_id)
+          }
+        } catch (getUserError) {
+          console.error('Error getting user data for KV limit handling:', getUserError)
+        }
+      }
+    }
+    
     return null
   }
 }
@@ -720,6 +829,93 @@ async function handleStart(message) {
 }
 
 /**
+ * 检查是否是 KV 写入限制错误
+ */
+function isKVWriteLimitError(error) {
+  const errorMessage = (error.message || '').toLowerCase()
+  return errorMessage.includes('kv put() limit exceeded') || 
+         errorMessage.includes('kv write limit') ||
+         errorMessage.includes('quota exceeded')
+}
+
+// 用于跟踪每日已发送KV限制警告的用户（使用内存变量）
+let dailyKVAlertSent = new Set()
+let lastAlertDate = new Date().toDateString() // 记录上次警告的日期
+
+/**
+ * 处理 KV 写入限制错误
+ */
+async function handleKVLimitError(user, message_thread_id) {
+  const user_id = user.id
+  const userDisplayName = user.first_name || '用户'
+  const currentDate = new Date().toDateString()
+  
+  try {
+    // 检查是否是新的一天，如果是则清空警告记录
+    if (currentDate !== lastAlertDate) {
+      dailyKVAlertSent.clear()
+      lastAlertDate = currentDate
+      console.log(`🔄 Reset daily KV alert tracking for new date: ${currentDate}`)
+    }
+    
+    // 检查是否已经为该用户发送过警告
+    const alertKey = `${user_id}_${currentDate}`
+    if (!dailyKVAlertSent.has(alertKey)) {
+      // 还没有为该用户发送过警告，发送给管理员
+      let alertText = `🚨 <b>KV 存储限制警告</b>\n\n` +
+                     `⚠️ 已达到 Cloudflare KV 每日写入上限！\n\n` +
+                     `👤 用户信息：\n` +
+                     `• 姓名：${userDisplayName}\n` +
+                     `• 用户名：@${user.username || '无'}\n` +
+                     `• Telegram ID：<code>${user_id}</code>\n`
+      
+      if (message_thread_id) {
+        alertText += `• 话题ID：${message_thread_id}\n`
+        alertText += `• 状态：已有话题，消息无法转发\n\n`
+      } else {
+        alertText += `• 状态：未创建话题，无法创建新话题\n\n`
+      }
+      
+      alertText += `📋 <b>影响：</b>\n` +
+                  `• 无法创建新话题\n` +
+                  `• 无法更新用户数据\n` +
+                  `• 无法转发用户消息\n\n` +
+                  `🔧 <b>建议：</b>\n` +
+                  `• 等待 UTC 时间重置（通常为每日 00:00）\n` +
+                  `• 考虑升级 Cloudflare 计划\n` +
+                  `• 检查是否有异常的写入操作\n\n` +
+                  `⏰ 时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}\n\n` +
+                  `ℹ️ 注意：同一用户每日仅提醒一次`
+      
+      await sendMessage({
+        chat_id: ADMIN_UID,
+        text: alertText,
+        parse_mode: 'HTML'
+      })
+      
+      // 记录已发送警告
+      dailyKVAlertSent.add(alertKey)
+      console.log(`✅ KV limit alert sent to admin for user ${user_id}`)
+    } else {
+      console.log(`⏭️ KV limit alert already sent for user ${user_id} today, skipping admin notification`)
+    }
+    
+    // 总是通知用户（不管是否已经通知过管理员）
+    await sendMessage({
+      chat_id: user_id,
+      text: `抱歉，由于系统存储限制，您的消息暂时无法送达。\n\n` +
+            `对方已收到通知，请明日重试或等待问题解决。\n\n` +
+            `如有紧急情况，请直接联系对方。`
+    })
+    
+    console.log(`✅ KV limit error handled for user ${user_id}, topic: ${message_thread_id || 'none'}`)
+    
+  } catch (alertError) {
+    console.error('❌ Failed to handle KV limit error:', alertError)
+  }
+}
+
+/**
  * 用户消息转发到管理员 (u2a)
  */
 async function forwardMessageU2A(message) {
@@ -727,288 +923,308 @@ async function forwardMessageU2A(message) {
   const user_id = user.id
   const chat_id = message.chat.id
 
-  // 1. 人机验证
-  if (!await checkHuman(user_id, chat_id)) {
-    return
-  }
-
-  // 2. 消息频率限制
-  if (MESSAGE_INTERVAL > 0) {
-    const lastMessageTime = await db.getLastMessageTime(user_id)
-    const currentTime = Date.now()
-    
-    if (currentTime < lastMessageTime + MESSAGE_INTERVAL * 1000) {
-      const timeLeft = Math.ceil((lastMessageTime + MESSAGE_INTERVAL * 1000 - currentTime) / 1000)
-      if (timeLeft > 0) {
-        await sendMessage({
-          chat_id: chat_id,
-          text: `发送消息过于频繁，请等待 ${timeLeft} 秒后再试。`
-        })
-        return
-      }
+  try {
+    // 1. 人机验证
+    if (!await checkHuman(user_id, chat_id)) {
+      return
     }
-    await db.setLastMessageTime(user_id, currentTime)
-  }
 
-  // 3. 检查是否被屏蔽
-  const isBlocked = await db.isUserBlocked(user_id)
-  if (isBlocked) {
-    await sendMessage({
-      chat_id: chat_id,
-      text: '你已被屏蔽，无法发送消息。'
-    })
-    return
-  }
-
-  // 4. 更新用户信息
-  await updateUserDb(user)
-
-  // 5. 获取或创建话题
-  let user_data = await db.getUser(user_id)
-  if (!user_data) {
-    // 如果用户数据不存在（可能是KV延迟），等待并重试一次
-    console.log(`User data not found for ${user_id}, retrying...`)
-    await delay(100) // 等待100ms
-    user_data = await db.getUser(user_id)
-    
-    if (!user_data) {
-      // 如果仍然不存在，创建默认数据并保存
-      console.log(`Creating fallback user data for ${user_id}`)
-      user_data = {
-        user_id: user_id,
-        first_name: user.first_name || '未知',
-        last_name: user.last_name,
-        username: user.username,
-        message_thread_id: null,
-        created_at: Date.now(),
-        updated_at: Date.now()
-      }
-      await db.setUser(user_id, user_data)
-    }
-  }
-  let message_thread_id = user_data.message_thread_id
-  console.log(`User ${user_id} data loaded, message_thread_id: ${message_thread_id}`)
-  
-  // 检查话题状态
-  if (message_thread_id) {
-    const topicStatus = await db.getTopicStatus(message_thread_id)
-    console.log(`Topic ${message_thread_id} status check:`, topicStatus)
-    
-    if (topicStatus.status === 'closed') {
-      if (DELETE_TOPIC_AS_BAN) {
-        await sendMessage({
-          chat_id: chat_id,
-          text: '对话已被管理员关闭且禁止重开。您的消息无法送达。'
-        })
-        return
-      } else {
-        await sendMessage({
-          chat_id: chat_id,
-          text: '对话已被管理员关闭。您的消息暂时无法送达。如需继续，请等待管理员重新打开对话。'
-        })
-        return
-      }
-    } else if (topicStatus.status === 'deleted' || topicStatus.status === 'removed') {
-      // 话题已被删除，需要重新创建
-      const oldThreadId = message_thread_id
-      message_thread_id = null
-      user_data.message_thread_id = null
-      await db.setUser(user_id, user_data)
-      // 清理旧的话题状态记录
-      await db.setTopicStatus(oldThreadId, 'removed')
-                  console.log(`Topic ${oldThreadId} was deleted/removed, will create new one for user ${user_id}`)
-    }
-  }
-
-  console.log(`After topic status check, message_thread_id: ${message_thread_id}`)
-
-  // 创建新话题
-  if (!message_thread_id) {
-    console.log(`Creating new topic for user ${user_id} (${user.first_name || '用户'})`)
-    try {
-      const topicName = `${user.first_name || '用户'}|${user_id}`.substring(0, 128)
-      console.log(`Topic name: ${topicName}`)
-      const forumTopic = await createForumTopic(ADMIN_GROUP_ID, topicName)
+    // 2. 消息频率限制
+    if (MESSAGE_INTERVAL > 0) {
+      const lastMessageTime = await db.getLastMessageTime(user_id)
+      const currentTime = Date.now()
       
-      if (forumTopic.ok) {
-        message_thread_id = forumTopic.result.message_thread_id
-        user_data.message_thread_id = message_thread_id
-        await db.setUser(user_id, user_data)
-        await db.setTopicStatus(message_thread_id, 'opened')
-        
-        console.log(`✅ Created new topic ${message_thread_id} for user ${user_id}`)
-        
-        // 发送联系人卡片
-        console.log(`📱 Sending contact card for user ${user_id} to topic ${message_thread_id}`)
-        console.log(`User object:`, {
-          id: user.id,
-          first_name: user.first_name,
-          last_name: user.last_name,
-          username: user.username
-        })
-        
-        try {
-          const contactResult = await sendContactCard(ADMIN_GROUP_ID, message_thread_id, user)
-          if (contactResult && contactResult.ok) {
-            console.log(`✅ Contact card sent successfully for user ${user_id}, message_id: ${contactResult.result.message_id}`)
-          } else {
-            console.log(`❌ Contact card failed to send for user ${user_id}:`, contactResult)
-          }
-        } catch (contactError) {
-          console.error(`❌ Error sending contact card for user ${user_id}:`, contactError)
+      if (currentTime < lastMessageTime + MESSAGE_INTERVAL * 1000) {
+        const timeLeft = Math.ceil((lastMessageTime + MESSAGE_INTERVAL * 1000 - currentTime) / 1000)
+        if (timeLeft > 0) {
+          await sendMessage({
+            chat_id: chat_id,
+            text: `发送消息过于频繁，请等待 ${timeLeft} 秒后再试。`
+          })
+          return
         }
-      } else {
-        await sendMessage({
-          chat_id: chat_id,
-          text: '创建会话失败，请稍后再试或联系管理员。'
-        })
-        return
       }
-    } catch (error) {
-      console.error('Failed to create topic:', error)
+      await db.setLastMessageTime(user_id, currentTime)
+    }
+
+    // 3. 检查是否被屏蔽
+    const isBlocked = await db.isUserBlocked(user_id)
+    if (isBlocked) {
       await sendMessage({
         chat_id: chat_id,
-        text: '创建会话时发生错误，请稍后再试。'
+        text: '你已被屏蔽，无法发送消息。'
       })
       return
     }
-  }
 
-  console.log(`Final message_thread_id before forwarding: ${message_thread_id}`)
-  
-  // 6. 处理消息转发
-  console.log(`Starting message forwarding to topic ${message_thread_id}`)
-  try {
-    const params = { message_thread_id: message_thread_id }
+    // 4. 更新用户信息
+    await updateUserDb(user)
+
+    // 5. 获取或创建话题
+    let user_data = await db.getUser(user_id)
+    if (!user_data) {
+      // 如果用户数据不存在（可能是KV延迟），等待并重试一次
+      console.log(`User data not found for ${user_id}, retrying...`)
+      await delay(100) // 等待100ms
+      user_data = await db.getUser(user_id)
+      
+      if (!user_data) {
+        // 如果仍然不存在，创建默认数据并保存
+        console.log(`Creating fallback user data for ${user_id}`)
+        user_data = {
+          user_id: user_id,
+          first_name: user.first_name || '未知',
+          last_name: user.last_name,
+          username: user.username,
+          message_thread_id: null,
+          created_at: Date.now(),
+          updated_at: Date.now()
+        }
+        await db.setUser(user_id, user_data)
+      }
+    }
+    let message_thread_id = user_data.message_thread_id
+    console.log(`User ${user_id} data loaded, message_thread_id: ${message_thread_id}`)
     
-    // 处理回复消息
-    if (message.reply_to_message) {
-      console.log(`User replying to message: ${message.reply_to_message.message_id}`)
-      const originalId = await db.getMessageMap(`u2a:${message.reply_to_message.message_id}`)
-      console.log(`Found original group message: ${originalId}`)
-      if (originalId) {
-        params.reply_to_message_id = originalId
-        console.log(`Setting reply_to_message_id: ${originalId}`)
+    // 检查话题状态
+    if (message_thread_id) {
+      const topicStatus = await db.getTopicStatus(message_thread_id)
+      console.log(`Topic ${message_thread_id} status check:`, topicStatus)
+      
+      if (topicStatus.status === 'closed') {
+        if (DELETE_TOPIC_AS_BAN) {
+          await sendMessage({
+            chat_id: chat_id,
+            text: '对话已被对方关闭且禁止重开。您的消息无法送达。'
+          })
+          return
+        } else {
+          await sendMessage({
+            chat_id: chat_id,
+            text: '对话已被对方关闭。您的消息暂时无法送达。如需继续，请等待对方重新打开对话。'
+          })
+          return
+        }
+      } else if (topicStatus.status === 'deleted' || topicStatus.status === 'removed') {
+        // 话题已被删除，需要重新创建
+        const oldThreadId = message_thread_id
+        message_thread_id = null
+        user_data.message_thread_id = null
+        await db.setUser(user_id, user_data)
+        // 清理旧的话题状态记录
+        await db.setTopicStatus(oldThreadId, 'removed')
+        console.log(`Topic ${oldThreadId} was deleted/removed, will create new one for user ${user_id}`)
       }
     }
 
-    if (message.media_group_id) {
-      // 处理媒体组
-      const mediaGroupPromise = await handleMediaGroup(message, chat_id, ADMIN_GROUP_ID, 'u2a')
-      // 如果返回了Promise，等待它完成
-      if (mediaGroupPromise) {
-        await mediaGroupPromise
-      }
-    } else {
-      console.log(`Processing single message (not media group)`)
-      // 处理单条消息
-      console.log(`Copying single message with params:`, {
-        chat_id: ADMIN_GROUP_ID,
-        from_chat_id: chat_id,
-        message_id: message.message_id,
-        ...params
-      })
-      
-      let sent
+    console.log(`After topic status check, message_thread_id: ${message_thread_id}`)
+
+    // 创建新话题
+    if (!message_thread_id) {
+      console.log(`Creating new topic for user ${user_id} (${user.first_name || '用户'})`)
       try {
-        sent = await copyMessage({
+        const topicName = `${user.first_name || '用户'}|${user_id}`.substring(0, 128)
+        console.log(`Topic name: ${topicName}`)
+        const forumTopic = await createForumTopic(ADMIN_GROUP_ID, topicName)
+        
+        if (forumTopic.ok) {
+          message_thread_id = forumTopic.result.message_thread_id
+          user_data.message_thread_id = message_thread_id
+          await db.setUser(user_id, user_data)
+          await db.setTopicStatus(message_thread_id, 'opened')
+          
+          console.log(`✅ Created new topic ${message_thread_id} for user ${user_id}`)
+          
+          // 发送联系人卡片
+          console.log(`📱 Sending contact card for user ${user_id} to topic ${message_thread_id}`)
+          console.log(`User object:`, {
+            id: user.id,
+            first_name: user.first_name,
+            last_name: user.last_name,
+            username: user.username
+          })
+          
+          try {
+            const contactResult = await sendContactCard(ADMIN_GROUP_ID, message_thread_id, user)
+            if (contactResult && contactResult.ok) {
+              console.log(`✅ Contact card sent successfully for user ${user_id}, message_id: ${contactResult.result.message_id}`)
+            } else {
+              console.log(`❌ Contact card failed to send for user ${user_id}:`, contactResult)
+            }
+          } catch (contactError) {
+            console.error(`❌ Error sending contact card for user ${user_id}:`, contactError)
+          }
+        } else {
+          await sendMessage({
+            chat_id: chat_id,
+            text: '创建会话失败，请稍后再试或联系对方。'  
+          })
+          return
+        }
+      } catch (error) {
+        console.error('Failed to create topic:', error)
+        await sendMessage({
+          chat_id: chat_id,
+          text: '创建会话时发生错误，请稍后再试。'
+        })
+        return
+      }
+    }
+
+    console.log(`Final message_thread_id before forwarding: ${message_thread_id}`)
+    
+    // 6. 处理消息转发
+    console.log(`Starting message forwarding to topic ${message_thread_id}`)
+    try {
+      const params = { message_thread_id: message_thread_id }
+      
+      // 处理回复消息
+      if (message.reply_to_message) {
+        console.log(`User replying to message: ${message.reply_to_message.message_id}`)
+        const originalId = await db.getMessageMap(`u2a:${message.reply_to_message.message_id}`)
+        console.log(`Found original group message: ${originalId}`)
+        if (originalId) {
+          params.reply_to_message_id = originalId
+          console.log(`Setting reply_to_message_id: ${originalId}`)
+        }
+      }
+
+      if (message.media_group_id) {
+        // 处理媒体组
+        const mediaGroupPromise = await handleMediaGroup(message, chat_id, ADMIN_GROUP_ID, 'u2a')
+        // 如果返回了Promise，等待它完成
+        if (mediaGroupPromise) {
+          await mediaGroupPromise
+        }
+      } else {
+        console.log(`Processing single message (not media group)`)
+        // 处理单条消息
+        console.log(`Copying single message with params:`, {
           chat_id: ADMIN_GROUP_ID,
           from_chat_id: chat_id,
           message_id: message.message_id,
           ...params
         })
-        console.log(`Copy message result:`, sent)
-      } catch (copyError) {
-        console.error(`❌ copyMessage failed:`, copyError)
-        console.error(`❌ copyMessage error details:`, {
-          description: copyError.description,
-          message: copyError.message,
-          error_code: copyError.error_code,
-          ok: copyError.ok
-        })
-        throw copyError // 重新抛出错误以便外层catch处理
-      }
-      
-      if (sent && sent.ok) {
-        await db.setMessageMap(`u2a:${message.message_id}`, sent.result.message_id)
-        await db.setMessageMap(`a2u:${sent.result.message_id}`, message.message_id)
-        console.log(`✅ Forwarded u2a: user(${user_id}) msg(${message.message_id}) -> group msg(${sent.result.message_id})`)
-        console.log(`✅ Stored mapping: u2a:${message.message_id} -> ${sent.result.message_id}`)
-        console.log(`✅ Stored mapping: a2u:${sent.result.message_id} -> ${message.message_id}`)
-      } else {
-        console.error(`❌ copyMessage failed, sent.ok = false`)
-        console.error(`❌ copyMessage response:`, sent)
         
-        // 检查是否是话题删除错误
-        const errorText = (sent.description || '').toLowerCase()
-        console.log(`🔍 Checking copyMessage error text: "${errorText}"`)
+        let sent
+        try {
+          sent = await copyMessage({
+            chat_id: ADMIN_GROUP_ID,
+            from_chat_id: chat_id,
+            message_id: message.message_id,
+            ...params
+          })
+          console.log(`Copy message result:`, sent)
+        } catch (copyError) {
+          console.error(`❌ copyMessage failed:`, copyError)
+          console.error(`❌ copyMessage error details:`, {
+            description: copyError.description,
+            message: copyError.message,
+            error_code: copyError.error_code,
+            ok: copyError.ok
+          })
+          throw copyError // 重新抛出错误以便外层catch处理
+        }
         
-        if (errorText.includes('message thread not found') || 
-            errorText.includes('topic deleted') || 
-            errorText.includes('thread not found') ||
-            errorText.includes('topic not found')) {
+        if (sent && sent.ok) {
+          await db.setMessageMap(`u2a:${message.message_id}`, sent.result.message_id)
+          await db.setMessageMap(`a2u:${sent.result.message_id}`, message.message_id)
+          console.log(`✅ Forwarded u2a: user(${user_id}) msg(${message.message_id}) -> group msg(${sent.result.message_id})`)
+          console.log(`✅ Stored mapping: u2a:${message.message_id} -> ${sent.result.message_id}`)
+          console.log(`✅ Stored mapping: a2u:${sent.result.message_id} -> ${message.message_id}`)
+        } else {
+          console.error(`❌ copyMessage failed, sent.ok = false`)
+          console.error(`❌ copyMessage response:`, sent)
           
-          // 创建一个错误对象来触发删除处理
-          const deleteError = new Error('Topic deleted')
-          deleteError.description = sent.description || 'Topic deleted'
-          throw deleteError
+          // 检查是否是话题删除错误
+          const errorText = (sent.description || '').toLowerCase()
+          console.log(`🔍 Checking copyMessage error text: "${errorText}"`)
+          
+          if (errorText.includes('message thread not found') || 
+              errorText.includes('topic deleted') || 
+              errorText.includes('thread not found') ||
+              errorText.includes('topic not found')) {
+            
+            // 创建一个错误对象来触发删除处理
+            const deleteError = new Error('Topic deleted')
+            deleteError.description = sent.description || 'Topic deleted'
+            throw deleteError
+          }
         }
       }
-    }
-  } catch (error) {
-    console.error('❌ Error forwarding message u2a:', error)
-    console.error('❌ Error details:', {
-      description: error.description,
-      message: error.message,
-      error_code: error.error_code,
-      ok: error.ok,
-      stack: error.stack
-    })
-    
-    // 检查是否是话题删除错误（大小写不敏感）
-    const errorText = (error.description || error.message || '').toLowerCase()
-    console.log(`🔍 Checking error text for topic deletion: "${errorText}"`)
-    console.log(`🔍 Full error object:`, error)
-    
-    const isTopicDeletedError = errorText.includes('message thread not found') || 
-        errorText.includes('topic deleted') || 
-        errorText.includes('thread not found') ||
-        errorText.includes('topic not found') ||
-        (errorText.includes('chat not found') && errorText.includes(ADMIN_GROUP_ID))
-    
-    console.log(`🔍 Is topic deleted error: ${isTopicDeletedError}`)
-    
-    if (isTopicDeletedError) {
+    } catch (error) {
+      console.error('❌ Error forwarding message u2a:', error)
+      console.error('❌ Error details:', {
+        description: error.description,
+        message: error.message,
+        error_code: error.error_code,
+        ok: error.ok,
+        stack: error.stack
+      })
       
-      // 话题被删除，清理数据
-      const oldThreadId = user_data.message_thread_id
-      user_data.message_thread_id = null
-      await db.setUser(user_id, user_data)
+      // 检查是否是话题删除错误（大小写不敏感）
+      const errorText = (error.description || error.message || '').toLowerCase()
+      console.log(`🔍 Checking error text for topic deletion: "${errorText}"`)
+      console.log(`🔍 Full error object:`, error)
       
-      // 清理话题状态记录
-      if (oldThreadId) {
-        await db.setTopicStatus(oldThreadId, 'removed')
-      }
+      const isTopicDeletedError = errorText.includes('message thread not found') || 
+          errorText.includes('topic deleted') || 
+          errorText.includes('thread not found') ||
+          errorText.includes('topic not found') ||
+          (errorText.includes('chat not found') && errorText.includes(ADMIN_GROUP_ID))
       
-      console.log(`Topic ${oldThreadId} seems deleted. Cleared thread_id for user ${user_id}`)
+      console.log(`🔍 Is topic deleted error: ${isTopicDeletedError}`)
       
-      if (!DELETE_TOPIC_AS_BAN) {
-        await sendMessage({
-          chat_id: chat_id,
-          text: '发送失败：你之前的对话已被删除。请重新发送一次当前消息。'
-        })
+      if (isTopicDeletedError) {
+        
+        // 话题被删除，清理数据
+        const oldThreadId = user_data.message_thread_id
+        user_data.message_thread_id = null
+        await db.setUser(user_id, user_data)
+        
+        // 清理话题状态记录
+        if (oldThreadId) {
+          await db.setTopicStatus(oldThreadId, 'removed')
+        }
+        
+        console.log(`Topic ${oldThreadId} seems deleted. Cleared thread_id for user ${user_id}`)
+        
+        if (!DELETE_TOPIC_AS_BAN) {
+          await sendMessage({
+            chat_id: chat_id,
+            text: '发送失败：你之前的对话已被删除。请重新发送一次当前消息。'
+          })
+        } else {
+          await sendMessage({
+            chat_id: chat_id,
+            text: '发送失败：你的对话已被永久删除。消息无法送达。'
+          })
+        }
       } else {
         await sendMessage({
           chat_id: chat_id,
-          text: '发送失败：你的对话已被永久删除。消息无法送达。'
+          text: '发送消息时遇到问题，请稍后再试。'
         })
       }
-    } else {
-      await sendMessage({
-        chat_id: chat_id,
-        text: '发送消息时遇到问题，请稍后再试。'
-      })
     }
+    
+  } catch (error) {
+    console.error('❌ Error in forwardMessageU2A:', error)
+    
+    // 检查是否是 KV 写入限制错误
+    if (isKVWriteLimitError(error)) {
+      const user_data = await db.getUser(user_id).catch(() => null)
+      const message_thread_id = user_data?.message_thread_id || null
+      
+      await handleKVLimitError(user, message_thread_id)
+      return
+    }
+    
+    // 其他错误的通用处理
+    await sendMessage({
+      chat_id: chat_id,
+      text: '处理消息时发生错误，请稍后再试。'
+    })
   }
 }
 
@@ -1037,7 +1253,7 @@ async function forwardMessageA2U(message) {
     if (user_data) {
       await sendMessage({
         chat_id: user_data.user_id,
-        text: '对话已由管理员关闭。你暂时无法发送消息到此对话。'
+        text: '对话已由对方关闭。你暂时无法发送消息到此对话。'  
       })
     }
     await db.setTopicStatus(message_thread_id, 'closed')
@@ -1050,7 +1266,7 @@ async function forwardMessageA2U(message) {
     if (user_data) {
       await sendMessage({
         chat_id: user_data.user_id,
-        text: '管理员已重新打开对话，你可以继续发送消息了。'
+        text: '对方已重新打开对话，你可以继续发送消息了。'  
       })
     }
     await db.setTopicStatus(message_thread_id, 'opened')
