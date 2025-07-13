@@ -10,9 +10,6 @@ const MESSAGE_INTERVAL = (typeof ENV_MESSAGE_INTERVAL !== 'undefined') ? parseIn
 const DELETE_USER_MESSAGES = (typeof ENV_DELETE_USER_MESSAGES !== 'undefined') ? ENV_DELETE_USER_MESSAGES === 'true' : false // 清理话题时是否删除用户消息
 const DELETE_TOPIC_AS_BAN = (typeof ENV_DELETE_TOPIC_AS_BAN !== 'undefined') ? ENV_DELETE_TOPIC_AS_BAN === 'true' : false // 删除话题是否等同于永久封禁
 
-// === 数据源 ===
-const fraudDb = 'https://raw.githubusercontent.com/LloydAsp/nfd/main/data/fraud.db';
-
 // === KV 存储 ===
 // 在 Cloudflare Workers 中，KV 存储通过绑定的变量访问，如果未绑定则为 undefined
 const nfdKV = (typeof nfd !== 'undefined') ? nfd : null;
@@ -273,19 +270,6 @@ function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-/**
- * 反欺诈检查
- */
-async function isFraud(user_id) {
-  try {
-    const response = await fetch(fraudDb)
-    const fraudList = await response.text()
-    return fraudList.includes(user_id.toString())
-  } catch (error) {
-    console.error('Error checking fraud database:', error)
-    return false
-  }
-}
 
 /**
  * 用户数据库更新
@@ -1046,14 +1030,6 @@ async function findUserByThreadId(thread_id) {
  * 处理通知
  */
 async function handleNotify(user_id) {
-  // 检查是否是诈骗用户
-  if (await isFraud(user_id)) {
-    await sendMessage({
-    chat_id: ADMIN_UID,
-      text: `检测到骗子，UID: ${user_id}`,
-      parse_mode: 'HTML'
-    })
-  }
 }
 
 /**
