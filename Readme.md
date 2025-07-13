@@ -70,16 +70,16 @@
    
    在 Worker 的 设置 → 变量和机密 中添加以下变量：
    
-   **变量：**
+   **必填变量：**
    - `ENV_BOT_TOKEN`：你的 Bot Token
    - `ENV_BOT_SECRET`：生成的 UUID 密钥
    - `ENV_ADMIN_UID`：管理员用户 ID
    - `ENV_ADMIN_GROUP_ID`：管理群组 ID
-   - `ENV_WELCOME_MESSAGE`：欢迎消息，自行修改
-   - `ENV_DISABLE_CAPTCHA`：禁用验证码（true/false）。项目是从服务器版本修改的，但由于Cloudflare性质，必须填true
-   - `ENV_MESSAGE_INTERVAL`：消息间隔限制秒数，建议为 1。-1为不限制。
-   - `ENV_DELETE_USER_MESSAGES`：清理话题时删除用户消息（true/false），建议为false
-   - `ENV_DELETE_TOPIC_AS_BAN`：删除话题视为永久封禁（true/false），建议为false
+   **选填变量：**
+   - `ENV_WELCOME_MESSAGE`：欢迎消息，自行修改，默认为 欢迎使用机器人
+   - `ENV_MESSAGE_INTERVAL`：消息间隔限制秒数，默认为 1。-1为不限制。
+   - `ENV_DELETE_USER_MESSAGES`：清理话题时删除用户消息（true/false），默认为 false
+   - `ENV_DELETE_TOPIC_AS_BAN`：删除话题视为永久封禁（true/false），默认为 false
 
 4. **创建 KV 数据库**
    - 在 Cloudflare 控制台中创建一个 KV Namespace（在存储和数据库中）
