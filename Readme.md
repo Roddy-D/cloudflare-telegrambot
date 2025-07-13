@@ -61,7 +61,7 @@
 
 2. **创建 Worker**
    - 点击 "Workers"-"Workers and Pages"
-   - 点击 "Create a Service"
+   - 点击 "创建"
    - 选择 "从 Hello World! 开始" 模板
    - 为你的 Worker 命名
 
@@ -82,7 +82,7 @@
    - `ENV_DELETE_TOPIC_AS_BAN`：删除话题视为永久封禁（true/false），建议为false
 
 4. **创建 KV 数据库**
-   - 在 Cloudflare 控制台中创建一个 KV Namespace（存储和数据库）
+   - 在 Cloudflare 控制台中创建一个 KV Namespace（在存储和数据库中）
    - 名称设为 `horr`
    - 在 Worker 中绑定 - 添加绑定 KV：
      - Variable name: `horr`
