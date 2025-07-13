@@ -62,8 +62,9 @@
 2. **创建 Worker**
    - 点击 "Workers"-"Workers and Pages"
    - 点击 "Create a Service"
+   - 选择 "从 Hello World! 开始" 模板
    - 为你的 Worker 命名
-   - 选择 "HTTP handler" 模板
+
 
 3. **配置环境变量**
    
