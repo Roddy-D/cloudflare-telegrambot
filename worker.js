@@ -996,13 +996,13 @@ async function forwardMessageU2A(message) {
         if (DELETE_TOPIC_AS_BAN) {
           await sendMessage({
             chat_id: chat_id,
-            text: '对话已被对方关闭且禁止重开。您的消息无法送达。'
+            text: '对话已被对方关闭且禁止重开，您已被永久屏蔽。您的消息无法送达。'
           })
           return
         } else {
           await sendMessage({
             chat_id: chat_id,
-            text: '对话已被对方关闭。您的消息暂时无法送达。如需继续，请等待对方重新打开对话。'
+            text: '对话已被对方关闭，您被暂时屏蔽。您的消息暂时无法送达。如需继续，请等待对方重新打开对话。'
           })
           return
         }
@@ -1619,51 +1619,86 @@ async function handleBroadcastCommand(message) {
     return
   }
 
+  // 检查 KV 存储是否可用
+  if (!horrKV) {
+    await sendMessage({
+      chat_id: message.chat.id,
+      text: '❌ KV 存储不可用，无法获取用户列表。',
+      reply_to_message_id: message.message_id
+    })
+    return
+  }
+
   const broadcastMessage = message.reply_to_message
   
-  // 立即开始广播
-  setTimeout(async () => {
-    const users = await db.getAllUsers()
-    const activeUsers = users.filter(u => u.message_thread_id)
-    
-    let success = 0
-    let failed = 0
-    let blocked = 0
-    
-    console.log(`Starting broadcast to ${activeUsers.length} users`)
-    
-    for (const user of activeUsers) {
-      try {
-        await copyMessage({
-          chat_id: user.user_id,
-          from_chat_id: broadcastMessage.chat.id,
-          message_id: broadcastMessage.message_id
-        })
-        success++
-        await delay(100) // 防止频率限制
-      } catch (error) {
-        if (error.description && (error.description.includes('bot was blocked') || error.description.includes('user is deactivated'))) {
-          blocked++
-        } else {
-          failed++
-        }
-      }
-    }
-    
-    console.log(`Broadcast completed: ${success} success, ${failed} failed, ${blocked} blocked`)
-    
-    // 通知管理员结果
-    await sendMessage({
-    chat_id: ADMIN_UID,
-      text: `📢 广播完成：\n成功: ${success}\n失败: ${failed}\n屏蔽/停用: ${blocked}`
-    })
-  }, 1000)
-  
+  // 立即发送确认消息
   await sendMessage({
     chat_id: message.chat.id,
     text: `📢 广播任务已启动，将广播消息 ID: ${broadcastMessage.message_id}`,
     reply_to_message_id: message.message_id
   })
+  
+  // 使用 Promise 而不是 setTimeout 来避免 Workers 中的问题
+  const broadcastPromise = (async () => {
+    try {
+      const users = await db.getAllUsers()
+      const activeUsers = users.filter(u => u.message_thread_id)
+      
+      if (activeUsers.length === 0) {
+        await sendMessage({
+          chat_id: message.chat.id,
+          text: '❌ 没有找到活跃用户，广播取消。',
+          reply_to_message_id: message.message_id
+        })
+        return
+      }
+      
+      let success = 0
+      let failed = 0
+      let blocked = 0
+      
+      console.log(`Starting broadcast to ${activeUsers.length} users`)
+      
+      for (const user of activeUsers) {
+        try {
+          await copyMessage({
+            chat_id: user.user_id,
+            from_chat_id: broadcastMessage.chat.id,
+            message_id: broadcastMessage.message_id
+          })
+          success++
+          await delay(100) // 防止频率限制
+        } catch (error) {
+          console.error(`Broadcast error for user ${user.user_id}:`, error)
+          if (error.description && (error.description.includes('bot was blocked') || error.description.includes('user is deactivated'))) {
+            blocked++
+          } else {
+            failed++
+          }
+        }
+      }
+      
+      console.log(`Broadcast completed: ${success} success, ${failed} failed, ${blocked} blocked`)
+      
+      // 修复：将结果发送到管理群组而不是管理员私聊
+      await sendMessage({
+        chat_id: message.chat.id,
+        text: `📢 广播完成：\n✅ 成功: ${success}\n❌ 失败: ${failed}\n🚫 屏蔽/停用: ${blocked}\n👥 总计: ${activeUsers.length}`,
+        reply_to_message_id: message.message_id
+      })
+    } catch (error) {
+      console.error('Broadcast error:', error)
+      await sendMessage({
+        chat_id: message.chat.id,
+        text: `❌ 广播执行失败: ${error.message}`,
+        reply_to_message_id: message.message_id
+      })
+    }
+  })()
+  
+  // 在 Workers 中使用 event.waitUntil 来确保异步操作完成
+  // 这里我们不能直接访问 event，所以只能依赖 Promise
+  return broadcastPromise
 }
 
 /**
