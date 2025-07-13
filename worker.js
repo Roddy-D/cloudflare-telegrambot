@@ -4,6 +4,7 @@ const WEBHOOK = '/endpoint'
 const SECRET = (typeof ENV_BOT_SECRET !== 'undefined') ? ENV_BOT_SECRET : null // A-Z, a-z, 0-9, _ and -
 const ADMIN_UID = (typeof ENV_ADMIN_UID !== 'undefined') ? ENV_ADMIN_UID : null // 管理员用户 ID
 const ADMIN_GROUP_ID = (typeof ENV_ADMIN_GROUP_ID !== 'undefined') ? ENV_ADMIN_GROUP_ID : null // 管理群组 ID (必须是开启话题的超级群组)
+const APP_NAME = (typeof ENV_APP_NAME !== 'undefined') ? ENV_APP_NAME : 'messagebot' // 应用名称
 const WELCOME_MESSAGE = (typeof ENV_WELCOME_MESSAGE !== 'undefined') ? ENV_WELCOME_MESSAGE : '欢迎使用机器人' // 欢迎消息
 const DISABLE_CAPTCHA = (typeof ENV_DISABLE_CAPTCHA !== 'undefined') ? ENV_DISABLE_CAPTCHA !== 'false' : true // 是否禁用人机验证（默认禁用）
 const MESSAGE_INTERVAL = (typeof ENV_MESSAGE_INTERVAL !== 'undefined') ? parseInt(ENV_MESSAGE_INTERVAL) || 1 : 1 // 消息间隔限制（秒）
@@ -12,7 +13,7 @@ const DELETE_TOPIC_AS_BAN = (typeof ENV_DELETE_TOPIC_AS_BAN !== 'undefined') ? E
 
 // === KV 存储 ===
 // 在 Cloudflare Workers 中，KV 存储通过绑定的变量访问，如果未绑定则为 undefined
-const nfdKV = (typeof nfd !== 'undefined') ? nfd : null;
+const horrKV = (typeof horr !== 'undefined') ? horr : null;
 
 // === 常量 ===
 const CAPTCHA_TIMEOUT = 60 * 1000; // 验证码超时时间
@@ -138,22 +139,22 @@ function answerCallbackQuery(callback_query_id, text, show_alert = false) {
 class Database {
   // 用户相关
   async getUser(user_id) {
-    if (!nfdKV) return null
-    const user = await nfdKV.get(`user:${user_id}`, { type: 'json' })
+    if (!horrKV) return null
+    const user = await horrKV.get(`user:${user_id}`, { type: 'json' })
     return user
   }
 
   async setUser(user_id, userData) {
-    if (!nfdKV) return
-    await nfdKV.put(`user:${user_id}`, JSON.stringify(userData))
+    if (!horrKV) return
+    await horrKV.put(`user:${user_id}`, JSON.stringify(userData))
   }
 
   async getAllUsers() {
-    if (!nfdKV) return []
-    const list = await nfdKV.list({ prefix: 'user:' })
+    if (!horrKV) return []
+    const list = await horrKV.list({ prefix: 'user:' })
     const users = []
     for (const key of list.keys) {
-      const user = await nfdKV.get(key.name, { type: 'json' })
+      const user = await horrKV.get(key.name, { type: 'json' })
       if (user) users.push(user)
     }
     return users
@@ -161,80 +162,80 @@ class Database {
 
   // 消息映射相关
   async getMessageMap(key) {
-    if (!nfdKV) return null
-    return await nfdKV.get(`msgmap:${key}`, { type: 'json' })
+    if (!horrKV) return null
+    return await horrKV.get(`msgmap:${key}`, { type: 'json' })
   }
 
   async setMessageMap(key, value) {
-    if (!nfdKV) return
-    await nfdKV.put(`msgmap:${key}`, JSON.stringify(value))
+    if (!horrKV) return
+    await horrKV.put(`msgmap:${key}`, JSON.stringify(value))
   }
 
   // 话题状态相关
   async getTopicStatus(thread_id) {
-    if (!nfdKV) return { status: 'opened' }
-    return await nfdKV.get(`topic:${thread_id}`, { type: 'json' }) || { status: 'opened' }
+    if (!horrKV) return { status: 'opened' }
+    return await horrKV.get(`topic:${thread_id}`, { type: 'json' }) || { status: 'opened' }
   }
 
   async setTopicStatus(thread_id, status) {
-    if (!nfdKV) return
-    await nfdKV.put(`topic:${thread_id}`, JSON.stringify({ status, updated_at: Date.now() }))
+    if (!horrKV) return
+    await horrKV.put(`topic:${thread_id}`, JSON.stringify({ status, updated_at: Date.now() }))
   }
 
   // 媒体组相关
   async getMediaGroup(group_id, chat_id) {
-    if (!nfdKV) return []
-    return await nfdKV.get(`media:${group_id}:${chat_id}`, { type: 'json' }) || []
+    if (!horrKV) return []
+    return await horrKV.get(`media:${group_id}:${chat_id}`, { type: 'json' }) || []
   }
 
   async addToMediaGroup(group_id, chat_id, message_id, caption = null) {
-    if (!nfdKV) return
+    if (!horrKV) return
     const messages = await this.getMediaGroup(group_id, chat_id)
     messages.push({ message_id, caption, timestamp: Date.now() })
-    await nfdKV.put(`media:${group_id}:${chat_id}`, JSON.stringify(messages))
+    await horrKV.put(`media:${group_id}:${chat_id}`, JSON.stringify(messages))
   }
 
   async clearMediaGroup(group_id, chat_id) {
-    if (!nfdKV) return
-    await nfdKV.delete(`media:${group_id}:${chat_id}`)
+    if (!horrKV) return
+    await horrKV.delete(`media:${group_id}:${chat_id}`)
   }
 
   // 用户状态相关
   async getUserState(user_id, key) {
-    if (!nfdKV) return null
-    return await nfdKV.get(`state:${user_id}:${key}`, { type: 'json' })
+    if (!horrKV) return null
+    return await horrKV.get(`state:${user_id}:${key}`, { type: 'json' })
   }
 
   async setUserState(user_id, key, value) {
-    if (!nfdKV) return
-    await nfdKV.put(`state:${user_id}:${key}`, JSON.stringify(value))
+    if (!horrKV) return
+    await horrKV.put(`state:${user_id}:${key}`, JSON.stringify(value))
   }
 
   async deleteUserState(user_id, key) {
-    if (!nfdKV) return
-    await nfdKV.delete(`state:${user_id}:${key}`)
+    if (!horrKV) return
+    await horrKV.delete(`state:${user_id}:${key}`)
   }
 
   // 屏蔽用户相关
   async isUserBlocked(user_id) {
-    if (!nfdKV) return false
-    return await nfdKV.get(`blocked:${user_id}`, { type: 'json' }) || false
+    if (!horrKV) return false
+    return await horrKV.get(`blocked:${user_id}`, { type: 'json' }) || false
   }
 
   async blockUser(user_id, blocked = true) {
-    if (!nfdKV) return
-    await nfdKV.put(`blocked:${user_id}`, JSON.stringify(blocked))
+    if (!horrKV) return
+    await horrKV.put(`blocked:${user_id}`, JSON.stringify(blocked))
   }
 
   // 消息频率限制
   async getLastMessageTime(user_id) {
-    if (!nfdKV) return 0
-    return await nfdKV.get(`lastmsg:${user_id}`, { type: 'json' }) || 0
+    if (!horrKV) return 0
+    return await horrKV.get(`lastmsg:${user_id}`, { type: 'json' }) || 0
   }
 
   async setLastMessageTime(user_id, timestamp) {
-    if (!nfdKV) return
-    await nfdKV.put(`lastmsg:${user_id}`, JSON.stringify(timestamp))
+    if (!horrKV) return
+    await horrKV.put(`lastmsg:${user_id}`, JSON.stringify(timestamp))
   }
 
 
@@ -827,12 +828,6 @@ async function forwardMessageU2A(message) {
          }
        }
     }
-
-    // 7. 反欺诈检查和通知
-    console.log(`🔍 Running fraud check for user ${user_id}`)
-    await handleNotify(user_id)
-    console.log(`✅ Message forwarding completed successfully for user ${user_id} to topic ${message_thread_id}`)
-    
   } catch (error) {
     console.error('❌ Error forwarding message u2a:', error)
     console.error('❌ Error details:', {
@@ -1026,11 +1021,7 @@ async function findUserByThreadId(thread_id) {
   return users.find(u => u.message_thread_id === thread_id)
 }
 
-/**
- * 处理通知
- */
-async function handleNotify(user_id) {
-}
+
 
 /**
  * 处理消息编辑
@@ -1139,10 +1130,10 @@ async function handleClearCommand(message) {
       if (DELETE_USER_MESSAGES) {
         // 获取所有相关消息映射
         const mappedMessages = []
-        if (nfdKV) {
-          const list = await nfdKV.list({ prefix: 'msgmap:u2a:' })
+        if (horrKV) {
+          const list = await horrKV.list({ prefix: 'msgmap:u2a:' })
           for (const key of list.keys) {
-            const value = await nfdKV.get(key.name, { type: 'json' })
+            const value = await horrKV.get(key.name, { type: 'json' })
             if (value) {
               mappedMessages.push(parseInt(key.name.split(':')[2]))
             }
@@ -1165,7 +1156,7 @@ async function handleClearCommand(message) {
         
           // 清理消息映射
           for (const key of list.keys) {
-            await nfdKV.delete(key.name)
+            await horrKV.delete(key.name)
           }
       }
     }
