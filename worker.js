@@ -4,7 +4,6 @@ const WEBHOOK = '/endpoint'
 const SECRET = (typeof ENV_BOT_SECRET !== 'undefined') ? ENV_BOT_SECRET : null // A-Z, a-z, 0-9, _ and -
 const ADMIN_UID = (typeof ENV_ADMIN_UID !== 'undefined') ? ENV_ADMIN_UID : null // 管理员用户 ID
 const ADMIN_GROUP_ID = (typeof ENV_ADMIN_GROUP_ID !== 'undefined') ? ENV_ADMIN_GROUP_ID : null // 管理群组 ID (必须是开启话题的超级群组)
-const APP_NAME = (typeof ENV_APP_NAME !== 'undefined') ? ENV_APP_NAME : 'messagebot' // 应用名称
 const WELCOME_MESSAGE = (typeof ENV_WELCOME_MESSAGE !== 'undefined') ? ENV_WELCOME_MESSAGE : '欢迎使用机器人' // 欢迎消息
 const DISABLE_CAPTCHA = (typeof ENV_DISABLE_CAPTCHA !== 'undefined') ? ENV_DISABLE_CAPTCHA !== 'false' : true // 是否禁用人机验证（默认禁用）
 const MESSAGE_INTERVAL = (typeof ENV_MESSAGE_INTERVAL !== 'undefined') ? parseInt(ENV_MESSAGE_INTERVAL) || 1 : 1 // 消息间隔限制（秒）
