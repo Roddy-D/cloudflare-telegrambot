@@ -499,10 +499,12 @@ async function handleCaptchaCallback(callback_query) {
 }
 
 /**
- * 延迟发送媒体组
+ * 延迟发送媒体组（已废弃，保留作为备用）
  */
-async function sendMediaGroupLater(delay_ms, chat_id, target_id, media_group_id, direction) {
-  await delay(delay_ms)
+async function sendMediaGroupLater_deprecated(delay_ms, chat_id, target_id, media_group_id, direction) {
+  if (delay_ms > 0) {
+    await delay(delay_ms)
+  }
   
   const mediaMessages = await db.getMediaGroup(media_group_id, chat_id)
   if (mediaMessages.length === 0) {
@@ -531,11 +533,11 @@ async function sendMediaGroupLater(delay_ms, chat_id, target_id, media_group_id,
           message_id: msg_id,
           message_thread_id: user.message_thread_id
         })
-                 if (sent.ok) {
-           sent_messages.push(sent.result)
-           await db.setMessageMap(`u2a:${msg_id}`, sent.result.message_id)
-           await db.setMessageMap(`a2u:${sent.result.message_id}`, msg_id)
-         }
+        if (sent.ok) {
+          sent_messages.push(sent.result)
+          await db.setMessageMap(`u2a:${msg_id}`, sent.result.message_id)
+          await db.setMessageMap(`a2u:${sent.result.message_id}`, msg_id)
+        }
       }
     } else {
       // 管理员到用户
@@ -545,11 +547,11 @@ async function sendMediaGroupLater(delay_ms, chat_id, target_id, media_group_id,
           from_chat_id: chat_id,
           message_id: msg_id
         })
-                 if (sent.ok) {
-           sent_messages.push(sent.result)
-           await db.setMessageMap(`a2u:${msg_id}`, sent.result.message_id)
-           await db.setMessageMap(`u2a:${sent.result.message_id}`, msg_id)
-         }
+        if (sent.ok) {
+          sent_messages.push(sent.result)
+          await db.setMessageMap(`a2u:${msg_id}`, sent.result.message_id)
+          await db.setMessageMap(`u2a:${sent.result.message_id}`, msg_id)
+        }
       }
     }
     
@@ -558,6 +560,141 @@ async function sendMediaGroupLater(delay_ms, chat_id, target_id, media_group_id,
     console.error(`Error sending media group ${media_group_id}:`, error)
   } finally {
     await db.clearMediaGroup(media_group_id, chat_id)
+  }
+}
+
+/**
+ * 处理媒体组消息（修复竞态条件版）
+ */
+async function handleMediaGroup(message, chat_id, target_id, direction) {
+  const media_group_id = message.media_group_id
+  
+  // 如果没有KV存储，直接单独转发每条消息
+  if (!horrKV) {
+    console.warn('No KV storage available, sending media group messages individually')
+    return await handleSingleMediaMessage(message, chat_id, target_id, direction)
+  }
+  
+  // 添加到媒体组
+  await db.addToMediaGroup(media_group_id, chat_id, message.message_id, message.caption)
+  
+  // 使用KV的原子操作来确保只有一个延迟任务
+  const lockKey = `media_lock:${media_group_id}:${chat_id}`
+  const EXTENDED_DELAY = 5000 // 5秒延迟
+  
+  try {
+    // 尝试获取锁（如果不存在则创建，存在则返回现有值）
+    const existingLock = await horrKV.get(lockKey)
+    
+    if (!existingLock) {
+      // 设置锁，过期时间为延迟时间的2倍
+      await horrKV.put(lockKey, JSON.stringify({
+        created_at: Date.now(),
+        message_id: message.message_id
+      }), { expirationTtl: Math.ceil(EXTENDED_DELAY / 1000) * 2 })
+      
+      // 创建延迟Promise
+      const delayedSend = delay(EXTENDED_DELAY).then(async () => {
+        try {
+          // 获取所有消息
+          const mediaMessages = await db.getMediaGroup(media_group_id, chat_id)
+          
+          if (mediaMessages.length === 0) {
+            console.warn(`No messages found for media group ${media_group_id}`)
+            return
+          }
+          
+          // 按时间戳排序，确保顺序正确
+          mediaMessages.sort((a, b) => a.timestamp - b.timestamp)
+          
+          // 转发所有消息
+          let successCount = 0
+          for (const mediaMsg of mediaMessages) {
+            const result = await handleSingleMediaMessage(
+              { message_id: mediaMsg.message_id, media_group_id, caption: mediaMsg.caption },
+              chat_id,
+              target_id,
+              direction
+            )
+            
+            if (result) {
+              successCount++
+            }
+            
+            // 消息间稍微延迟，避免速率限制
+            await delay(100)
+          }
+          
+          console.log(`Sent media group ${media_group_id}: ${successCount}/${mediaMessages.length} messages`)
+          
+        } catch (error) {
+          console.error(`Error in delayed send for media group ${media_group_id}:`, error)
+        } finally {
+          // 清理
+          await db.clearMediaGroup(media_group_id, chat_id)
+          await horrKV.delete(lockKey)
+        }
+      })
+      
+      return delayedSend
+    } else {
+      return null
+    }
+    
+  } catch (error) {
+    console.error(`Error handling media group ${media_group_id}:`, error)
+    // 如果出错，fallback到单独转发
+    return await handleSingleMediaMessage(message, chat_id, target_id, direction)
+  }
+}
+
+/**
+ * 处理单条媒体消息
+ */
+async function handleSingleMediaMessage(message, chat_id, target_id, direction) {
+  const params = {}
+  
+  // 处理回复消息
+  if (message.reply_to_message) {
+    const mapKey = direction === 'u2a' ? `u2a:${message.reply_to_message.message_id}` : `a2u:${message.reply_to_message.message_id}`
+    const originalId = await db.getMessageMap(mapKey)
+    if (originalId) {
+      params.reply_to_message_id = originalId
+    }
+  }
+  
+  // 设置话题ID（用户到管理员时需要）
+  if (direction === 'u2a') {
+    const user = await db.getUser(chat_id)
+    if (!user || !user.message_thread_id) {
+      console.warn(`User ${chat_id} or their topic not found`)
+      return
+    }
+    params.message_thread_id = user.message_thread_id
+  }
+  
+  try {
+    const sent = await copyMessage({
+      chat_id: target_id,
+      from_chat_id: chat_id,
+      message_id: message.message_id,
+      ...params
+    })
+    
+    if (sent.ok) {
+      // 建立消息映射
+      await db.setMessageMap(`${direction}:${message.message_id}`, sent.result.message_id)
+      const reverse_direction = direction === 'u2a' ? 'a2u' : 'u2a'
+      await db.setMessageMap(`${reverse_direction}:${sent.result.message_id}`, message.message_id)
+      
+      return sent.result
+    } else {
+      console.error(`Failed to forward ${direction}: msg(${message.message_id})`, sent)
+      return null
+    }
+  } catch (error) {
+    console.error(`Error forwarding ${direction}: msg(${message.message_id})`, error)
+    return null
   }
 }
 
@@ -744,33 +881,23 @@ async function forwardMessageU2A(message) {
   try {
     const params = { message_thread_id: message_thread_id }
     
-         // 处理回复消息
-     if (message.reply_to_message) {
-       console.log(`User replying to message: ${message.reply_to_message.message_id}`)
-       const originalId = await db.getMessageMap(`u2a:${message.reply_to_message.message_id}`)
-       console.log(`Found original group message: ${originalId}`)
-       if (originalId) {
-         params.reply_to_message_id = originalId
-         console.log(`Setting reply_to_message_id: ${originalId}`)
-       }
-     }
+    // 处理回复消息
+    if (message.reply_to_message) {
+      console.log(`User replying to message: ${message.reply_to_message.message_id}`)
+      const originalId = await db.getMessageMap(`u2a:${message.reply_to_message.message_id}`)
+      console.log(`Found original group message: ${originalId}`)
+      if (originalId) {
+        params.reply_to_message_id = originalId
+        console.log(`Setting reply_to_message_id: ${originalId}`)
+      }
+    }
 
     if (message.media_group_id) {
       // 处理媒体组
-      console.log(`Processing media group: ${message.media_group_id}`)
-      await db.addToMediaGroup(message.media_group_id, chat_id, message.message_id, message.caption)
-      
-      const existingMessages = await db.getMediaGroup(message.media_group_id, chat_id)
-      console.log(`Media group ${message.media_group_id} existing messages count: ${existingMessages.length}`)
-      
-      if (existingMessages.length === 1) {
-        // 第一条消息，设置延迟发送
-        console.log(`Scheduling delayed send for media group ${message.media_group_id}`)
-        setTimeout(() => {
-          sendMediaGroupLater(0, chat_id, ADMIN_GROUP_ID, message.media_group_id, 'u2a')
-        }, MEDIA_GROUP_DELAY)
-      } else {
-        console.log(`Media group ${message.media_group_id} is subsequent message, not scheduling`)
+      const mediaGroupPromise = await handleMediaGroup(message, chat_id, ADMIN_GROUP_ID, 'u2a')
+      // 如果返回了Promise，等待它完成
+      if (mediaGroupPromise) {
+        await mediaGroupPromise
       }
     } else {
       console.log(`Processing single message (not media group)`)
@@ -802,31 +929,31 @@ async function forwardMessageU2A(message) {
         throw copyError // 重新抛出错误以便外层catch处理
       }
       
-             if (sent && sent.ok) {
-         await db.setMessageMap(`u2a:${message.message_id}`, sent.result.message_id)
-         await db.setMessageMap(`a2u:${sent.result.message_id}`, message.message_id)
-         console.log(`✅ Forwarded u2a: user(${user_id}) msg(${message.message_id}) -> group msg(${sent.result.message_id})`)
-         console.log(`✅ Stored mapping: u2a:${message.message_id} -> ${sent.result.message_id}`)
-         console.log(`✅ Stored mapping: a2u:${sent.result.message_id} -> ${message.message_id}`)
-       } else {
-         console.error(`❌ copyMessage failed, sent.ok = false`)
-         console.error(`❌ copyMessage response:`, sent)
-         
-         // 检查是否是话题删除错误
-         const errorText = (sent.description || '').toLowerCase()
-         console.log(`🔍 Checking copyMessage error text: "${errorText}"`)
-         
-         if (errorText.includes('message thread not found') || 
-             errorText.includes('topic deleted') || 
-             errorText.includes('thread not found') ||
-             errorText.includes('topic not found')) {
-           
-           // 创建一个错误对象来触发删除处理
-           const deleteError = new Error('Topic deleted')
-           deleteError.description = sent.description || 'Topic deleted'
-           throw deleteError
-         }
-       }
+      if (sent && sent.ok) {
+        await db.setMessageMap(`u2a:${message.message_id}`, sent.result.message_id)
+        await db.setMessageMap(`a2u:${sent.result.message_id}`, message.message_id)
+        console.log(`✅ Forwarded u2a: user(${user_id}) msg(${message.message_id}) -> group msg(${sent.result.message_id})`)
+        console.log(`✅ Stored mapping: u2a:${message.message_id} -> ${sent.result.message_id}`)
+        console.log(`✅ Stored mapping: a2u:${sent.result.message_id} -> ${message.message_id}`)
+      } else {
+        console.error(`❌ copyMessage failed, sent.ok = false`)
+        console.error(`❌ copyMessage response:`, sent)
+        
+        // 检查是否是话题删除错误
+        const errorText = (sent.description || '').toLowerCase()
+        console.log(`🔍 Checking copyMessage error text: "${errorText}"`)
+        
+        if (errorText.includes('message thread not found') || 
+            errorText.includes('topic deleted') || 
+            errorText.includes('thread not found') ||
+            errorText.includes('topic not found')) {
+          
+          // 创建一个错误对象来触发删除处理
+          const deleteError = new Error('Topic deleted')
+          deleteError.description = sent.description || 'Topic deleted'
+          throw deleteError
+        }
+      }
     }
   } catch (error) {
     console.error('❌ Error forwarding message u2a:', error)
@@ -966,13 +1093,10 @@ async function forwardMessageA2U(message) {
 
     if (message.media_group_id) {
       // 处理媒体组
-      await db.addToMediaGroup(message.media_group_id, message.chat.id, message.message_id, message.caption)
-      
-      const existingMessages = await db.getMediaGroup(message.media_group_id, message.chat.id)
-      if (existingMessages.length === 1) {
-        setTimeout(() => {
-          sendMediaGroupLater(0, message.chat.id, target_user.user_id, message.media_group_id, 'a2u')
-        }, MEDIA_GROUP_DELAY)
+      const mediaGroupPromise = await handleMediaGroup(message, message.chat.id, target_user.user_id, 'a2u')
+      // 如果返回了Promise，等待它完成
+      if (mediaGroupPromise) {
+        await mediaGroupPromise
       }
     } else {
       // 处理单条消息
@@ -1021,7 +1145,87 @@ async function findUserByThreadId(thread_id) {
   return users.find(u => u.message_thread_id === thread_id)
 }
 
+/**
+ * 调试媒体组命令
+ */
+async function handleDebugMediaCommand(message) {
+  const user = message.from
+  const message_thread_id = message.message_thread_id
 
+  if (user.id.toString() !== ADMIN_UID) {
+    return
+  }
+
+  if (!horrKV) {
+    await sendMessage({
+      chat_id: message.chat.id,
+      message_thread_id: message_thread_id,
+      text: '❌ 没有配置KV存储，无法查看媒体组状态。',
+      reply_to_message_id: message.message_id
+    })
+    return
+  }
+
+  try {
+    // 获取所有媒体组相关的键
+    const mediaKeys = await horrKV.list({ prefix: 'media:' })
+    const lockKeys = await horrKV.list({ prefix: 'media_lock:' })
+    
+    let debugInfo = '📊 媒体组调试信息:\n\n'
+    
+    // 显示活跃的媒体组
+    debugInfo += `🎬 活跃媒体组 (${mediaKeys.keys.length}):\n`
+    for (const key of mediaKeys.keys) {
+      const mediaGroup = await horrKV.get(key.name, { type: 'json' })
+      if (mediaGroup && mediaGroup.length > 0) {
+        const keyParts = key.name.split(':')
+        const groupId = keyParts[1]
+        const chatId = keyParts[2]
+        
+        debugInfo += `  📁 群组ID: ${groupId}\n`
+        debugInfo += `  👤 聊天ID: ${chatId}\n`
+        debugInfo += `  📝 消息数: ${mediaGroup.length}\n`
+        debugInfo += `  🔢 消息ID: ${mediaGroup.map(m => m.message_id).join(', ')}\n`
+        debugInfo += `  ⏰ 时间戳: ${mediaGroup.map(m => new Date(m.timestamp).toLocaleTimeString()).join(', ')}\n\n`
+      }
+    }
+    
+    // 显示锁状态
+    debugInfo += `🔒 媒体组锁状态 (${lockKeys.keys.length}):\n`
+    for (const key of lockKeys.keys) {
+      const lock = await horrKV.get(key.name, { type: 'json' })
+      if (lock) {
+        const keyParts = key.name.split(':')
+        const groupId = keyParts[1]
+        const chatId = keyParts[2]
+        
+        debugInfo += `  🔐 群组ID: ${groupId}, 聊天ID: ${chatId}\n`
+        debugInfo += `  📝 锁持有者消息ID: ${lock.message_id}\n`
+        debugInfo += `  ⏰ 创建时间: ${new Date(lock.created_at).toLocaleTimeString()}\n\n`
+      }
+    }
+    
+    if (mediaKeys.keys.length === 0 && lockKeys.keys.length === 0) {
+      debugInfo += '✅ 没有活跃的媒体组处理任务。'
+    }
+    
+    await sendMessage({
+      chat_id: message.chat.id,
+      message_thread_id: message_thread_id,
+      text: debugInfo,
+      reply_to_message_id: message.message_id
+    })
+    
+  } catch (error) {
+    console.error('Error in debug media command:', error)
+    await sendMessage({
+      chat_id: message.chat.id,
+      message_thread_id: message_thread_id,
+      text: `❌ 调试命令执行失败: ${error.message}`,
+      reply_to_message_id: message.message_id
+    })
+  }
+}
 
 /**
  * 处理消息编辑
@@ -1409,6 +1613,9 @@ async function onUpdate(update) {
         }
         if (message.text === '/checkblock') {
           return await handleCheckBlockCommand(message)
+        }
+        if (message.text === '/debugmedia') {
+          return await handleDebugMediaCommand(message)
         }
       }
 
