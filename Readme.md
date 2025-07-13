@@ -17,7 +17,7 @@
 #### 高级功能
 - **话题管理**：为每个用户创建独立的管理话题
 - **消息编辑同步**：用户和管理员的消息编辑实时同步
-- **媒体组处理**：完美支持照片、视频等媒体组转发
+- **媒体组处理**：支持照片、视频等媒体组的一条一条转发(Cloudflare不使用媒体组转发功能，因为它容易引发 KV 存储的并发锁竞争、消息重复发送、部分消息丢失等复杂问题，需要大量的重试机制、原子操作和错误处理逻辑来保证数据一致性，维护成本极高且容易出现竞态条件。）
 - **消息频率限制**：防止用户过于频繁发送消息
 - **广播功能**：向所有活跃用户发送通知
 - **联系人卡片**：自动展示用户头像和联系方式
@@ -76,7 +76,7 @@
    - `ENV_ADMIN_UID`：管理员用户 ID
    - `ENV_ADMIN_GROUP_ID`：管理群组 ID
    - `ENV_WELCOME_MESSAGE`：欢迎消息，自行修改
-   - `ENV_DISABLE_CAPTCHA`：禁用验证码（true/false）# 由于是从服务器版本修改的，但由于Cloudflare性质，必须填true
+   - `ENV_DISABLE_CAPTCHA`：禁用验证码（true/false）。项目是从服务器版本修改的，但由于Cloudflare性质，必须填true
    - `ENV_MESSAGE_INTERVAL`：消息间隔限制秒数，建议为 1。-1为不限制。
    - `ENV_DELETE_USER_MESSAGES`：清理话题时删除用户消息（true/false），建议为false
    - `ENV_DELETE_TOPIC_AS_BAN`：删除话题视为永久封禁（true/false），建议为false
