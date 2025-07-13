@@ -67,7 +67,7 @@
 
 3. **配置环境变量**
    
-   在 Worker 的 Settings → Variables 中添加以下变量：
+   在 Worker 的 设置 → 变量和机密 中添加以下变量：
    
    **变量：**
    - `ENV_BOT_TOKEN`：你的 Bot Token
