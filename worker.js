@@ -6,10 +6,11 @@ const ADMIN_UID = (typeof ENV_ADMIN_UID !== 'undefined') ? ENV_ADMIN_UID : null 
 const ADMIN_GROUP_ID = (typeof ENV_ADMIN_GROUP_ID !== 'undefined') ? ENV_ADMIN_GROUP_ID : null // 管理群组 ID (必须是开启话题的超级群组)
 // === 选填变量 ===
 const WELCOME_MESSAGE = (typeof ENV_WELCOME_MESSAGE !== 'undefined') ? ENV_WELCOME_MESSAGE : '欢迎使用机器人' // 欢迎消息
-const DISABLE_CAPTCHA = (typeof ENV_DISABLE_CAPTCHA !== 'undefined') ? ENV_DISABLE_CAPTCHA !== 'false' : true // 是否禁用人机验证（默认禁用）
 const MESSAGE_INTERVAL = (typeof ENV_MESSAGE_INTERVAL !== 'undefined') ? parseInt(ENV_MESSAGE_INTERVAL) || 1 : 1 // 消息间隔限制（秒）
 const DELETE_USER_MESSAGES = (typeof ENV_DELETE_USER_MESSAGES !== 'undefined') ? ENV_DELETE_USER_MESSAGES === 'true' : false // 清理话题时是否删除用户消息
 const DELETE_TOPIC_AS_BAN = (typeof ENV_DELETE_TOPIC_AS_BAN !== 'undefined') ? ENV_DELETE_TOPIC_AS_BAN === 'true' : false // 删除话题是否等同于永久封禁
+// === 默认禁用 ===
+const DISABLE_CAPTCHA = true
 
 // === KV 存储 ===
 // 在 Cloudflare Workers 中，KV 存储通过绑定的变量访问，如果未绑定则为 undefined
