@@ -75,6 +75,7 @@
    - `ENV_BOT_SECRET`：生成的 UUID 密钥
    - `ENV_ADMIN_UID`：管理员用户 ID
    - `ENV_ADMIN_GROUP_ID`：管理群组 ID
+   
    **选填变量：**
    - `ENV_WELCOME_MESSAGE`：欢迎消息，自行修改，默认为 欢迎使用机器人
    - `ENV_MESSAGE_INTERVAL`：消息间隔限制秒数，默认为 1。-1为不限制。
