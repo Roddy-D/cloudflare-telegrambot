@@ -174,7 +174,7 @@
 ## 🙏 致谢
 
 - [telegram-bot-cloudflare](https://github.com/cvzi/telegram-bot-cloudflare) - 基础架构参考
-- https://github.com/LloydAsp/nfd - 思路参考 & README参考
+- [nfd](https://github.com/LloydAsp/nfd) - 思路参考 & README参考
 - Cloudflare Workers 团队 - 提供优秀的无服务器平台
 - Telegram Bot API - 提供强大的机器人开发接口
   
