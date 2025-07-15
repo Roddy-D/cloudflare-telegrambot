@@ -84,9 +84,9 @@
    - `ENV_DELETE_TOPIC_AS_BAN`：删除话题视为永久封禁（true/false），默认为 false。false 时只会删除话题，对方只需要再发送一次消息即可再次新建话题
 
 4. **创建 KV 数据库**
-   - 在 Cloudflare 控制台中创建一个 KV Namespace（在存储和数据库中）
+   - 在 Cloudflare 控制台中创建一个 KV Namespace（存储和数据库 - KV）
    - 名称设为 `horr`
-   - 在 Worker 中绑定 - 添加绑定 KV：
+   - 回到步骤 2 创建的 Worker 中绑定 - 添加绑定 KV：
      - Variable name: `horr`
      - KV namespace: `horr`
 
