@@ -71,7 +71,7 @@
    
    在 Worker 的 设置 → 变量和机密 中添加以下变量：
    
-   **必填变量：**
+   **必填变量（前期准备中四项）：**
    - `ENV_BOT_TOKEN`：你的 Bot Token
    - `ENV_BOT_SECRET`：生成的 UUID 密钥
    - `ENV_ADMIN_UID`：管理员用户 ID
