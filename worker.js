@@ -303,13 +303,13 @@ async function sendContactCard(chat_id, message_thread_id, user) {
  */
 async function handleStart(message) {
   const user = message.from
-  await updateUserDb(user)
+    await updateUserDb(user)
   
-     if (user.id.toString() === ADMIN_UID) {
-     await sendMessage({
-       chat_id: user.id,
-       text: '你已成功激活机器人。'
-     })
+  if (user.id.toString() === ADMIN_UID) {
+    await sendMessage({
+      chat_id: user.id,
+      text: '你已成功激活机器人。'
+    })
   } else {
     await sendMessage({
       chat_id: user.id,
