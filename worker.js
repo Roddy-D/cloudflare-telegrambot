@@ -10,7 +10,6 @@ const MESSAGE_INTERVAL = (typeof ENV_MESSAGE_INTERVAL !== 'undefined') ? parseIn
 const DELETE_USER_MESSAGES = (typeof ENV_DELETE_USER_MESSAGES !== 'undefined') ? ENV_DELETE_USER_MESSAGES === 'true' : false // 清理话题时是否删除用户消息
 const DELETE_TOPIC_AS_BAN = (typeof ENV_DELETE_TOPIC_AS_BAN !== 'undefined') ? ENV_DELETE_TOPIC_AS_BAN === 'true' : false // 删除话题是否等同于永久封禁
 
-
 /**
  * Telegram API 请求封装
  */
@@ -81,8 +80,6 @@ function deleteForumTopic(chat_id, message_thread_id) {
   }))
 }
 
-
-
 function getUserProfilePhotos(user_id, limit = 1) {
   return requestTelegram('getUserProfilePhotos', null, {
     user_id: user_id,
@@ -93,10 +90,6 @@ function getUserProfilePhotos(user_id, limit = 1) {
 function sendPhoto(msg = {}) {
   return requestTelegram('sendPhoto', makeReqBody(msg))
 }
-
-
-
-
 
 /**
  * 数据库操作封装 (使用 KV 存储)
@@ -140,8 +133,6 @@ class Database {
     await horr.put(`topic:${thread_id}`, JSON.stringify({ status, updated_at: Date.now() }))
   }
 
-
-
   // 用户状态相关
   async getUserState(user_id, key) {
     return await horr.get(`state:${user_id}:${key}`, { type: 'json' })
@@ -172,8 +163,6 @@ class Database {
   async setLastMessageTime(user_id, timestamp) {
     await horr.put(`lastmsg:${user_id}`, JSON.stringify(timestamp))
   }
-
-
 }
 
 const db = new Database()
@@ -205,7 +194,6 @@ function randomString(length = 6) {
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
-
 
 /**
  * 用户数据库更新
@@ -273,7 +261,6 @@ async function sendContactCard(chat_id, message_thread_id, user) {
           parse_mode: 'HTML'
         }
         
-
         console.log(`Sending photo with params:`, photoParams)
         
         const result = await sendPhoto(photoParams)
@@ -293,7 +280,6 @@ async function sendContactCard(chat_id, message_thread_id, user) {
           parse_mode: 'HTML'
         }
         
-
         console.log(`Sending text message with params:`, messageParams)
         
         const result = await sendMessage(messageParams)
@@ -311,7 +297,6 @@ async function sendContactCard(chat_id, message_thread_id, user) {
     return { ok: false, error: error.message }
   }
 }
-
 
 /**
  * 处理 /start 命令
@@ -334,7 +319,6 @@ async function handleStart(message) {
   }
 }
 
-
 /**
  * 检查是否是 KV 写入限制错误
  */
@@ -348,7 +332,6 @@ function isKVWriteLimitError(error) {
 // 用于跟踪每日已发送KV限制警告的用户（使用内存变量）
 let dailyKVAlertSent = new Set()
 let lastAlertDate = new Date().toDateString() // 记录上次警告的日期
-
 
 /**
  * 处理 KV 写入限制错误
@@ -423,7 +406,6 @@ async function handleKVLimitError(user, message_thread_id) {
     console.error('❌ Failed to handle KV limit error:', alertError)
   }
 }
-
 
 /**
  * 用户消息转发到管理员 (u2a)
@@ -728,7 +710,6 @@ async function forwardMessageA2U(message) {
     return
   }
 
-
   // 查找目标用户
   const target_user = await findUserByThreadId(message_thread_id)
   if (!target_user) {
@@ -807,8 +788,6 @@ async function findUserByThreadId(thread_id) {
   const users = await db.getAllUsers()
   return users.find(u => u.message_thread_id === thread_id)
 }
-
-
 
 /**
  * 处理消息编辑
@@ -982,8 +961,6 @@ async function handleBroadcastCommand(message) {
     })
     return
   }
-
-
 
   const broadcastMessage = message.reply_to_message
   
@@ -1250,9 +1227,6 @@ async function onUpdate(update) {
         return await handleEditedMessage(edited_message, false)
       }
     }
-
-
-
   } catch (error) {
     console.error('Error processing update:', error)
   }
