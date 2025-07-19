@@ -81,8 +81,6 @@ function deleteForumTopic(chat_id, message_thread_id) {
   }))
 }
 
-
-
 function getUserProfilePhotos(user_id, limit = 1) {
   return requestTelegram('getUserProfilePhotos', null, {
     user_id: user_id,
@@ -93,9 +91,6 @@ function getUserProfilePhotos(user_id, limit = 1) {
 function sendPhoto(msg = {}) {
   return requestTelegram('sendPhoto', makeReqBody(msg))
 }
-
-
-
 
 
 /**
@@ -140,8 +135,6 @@ class Database {
     await horr.put(`topic:${thread_id}`, JSON.stringify({ status, updated_at: Date.now() }))
   }
 
-
-
   // 用户状态相关
   async getUserState(user_id, key) {
     return await horr.get(`state:${user_id}:${key}`, { type: 'json' })
@@ -172,11 +165,10 @@ class Database {
   async setLastMessageTime(user_id, timestamp) {
     await horr.put(`lastmsg:${user_id}`, JSON.stringify(timestamp))
   }
-
-
 }
 
 const db = new Database()
+
 
 /**
  * 工具函数
@@ -240,6 +232,7 @@ async function updateUserDb(user) {
     throw error
   }
 }
+
 
 /**
  * 发送联系人卡片
@@ -342,6 +335,7 @@ async function handleStart(message) {
     })
   }
 }
+
 
 /**
  * 用户消息转发到管理员 (u2a)
@@ -625,6 +619,7 @@ async function forwardMessageU2A(message) {
   }
 }
 
+
 /**
  * 管理员消息转发到用户 (a2u)
  */
@@ -636,8 +631,6 @@ async function forwardMessageA2U(message) {
   if (!message_thread_id || user.is_bot) {
     return
   }
-
-
 
   // 查找目标用户
   const target_user = await findUserByThreadId(message_thread_id)
@@ -719,7 +712,6 @@ async function findUserByThreadId(thread_id) {
 }
 
 
-
 /**
  * 处理消息编辑
  */
@@ -783,6 +775,7 @@ async function handleEditedMessage(edited_message, is_from_user = true) {
     }
   }
 }
+
 
 /**
  * 清理话题命令
@@ -868,6 +861,7 @@ async function handleClearCommand(message) {
     })
   }
 }
+
 
 /**
  * 广播命令
@@ -967,6 +961,7 @@ async function handleBroadcastCommand(message) {
   return broadcastPromise
 }
 
+
 /**
  * 处理屏蔽命令
  */
@@ -1018,6 +1013,7 @@ async function handleBlockCommand(message) {
   })
 }
 
+
 /**
  * 处理解除屏蔽命令
  */
@@ -1059,6 +1055,7 @@ async function handleUnblockCommand(message) {
   })
 }
 
+
 /**
  * 处理检查屏蔽状态命令
  */
@@ -1099,6 +1096,7 @@ async function handleCheckBlockCommand(message) {
     reply_to_message_id: message.message_id
   })
 }
+
 
 /**
  * 处理更新消息
@@ -1160,13 +1158,11 @@ async function onUpdate(update) {
         return await handleEditedMessage(edited_message, false)
       }
     }
-
-
-
   } catch (error) {
     console.error('Error processing update:', error)
   }
 }
+
 
 /**
  * 处理 Webhook 请求
@@ -1185,6 +1181,7 @@ async function handleWebhook(event) {
 
   return new Response('Ok')
 }
+
 
 /**
  * 注册 Webhook
@@ -1219,6 +1216,7 @@ async function registerWebhook(event, requestUrl, suffix, secret) {
   })
 }
 
+
 /**
  * 注销 Webhook
  */
@@ -1235,6 +1233,7 @@ async function unRegisterWebhook(event) {
 
   return new Response('ok' in (await r.json()) ? 'Ok' : 'Error')
 }
+
 
 /**
  * 主事件监听器
