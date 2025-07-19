@@ -1963,10 +1963,6 @@ async function registerWebhook(event, requestUrl, suffix, secret) {
   })
 }
 
-
-  return new Response('ok' in (await r.json()) ? 'Ok' : 'Error')
-}
-
 /**
  * 注销 Webhook
  */
