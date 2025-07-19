@@ -52,7 +52,7 @@
 
 4. **生成密钥**
    - 访问 [UUID Generator](https://www.uuidgenerator.net/)
-   - 生成一个随机 UUID 作为 webhook 密钥，或自定义你自己的密钥
+   - 生成一个随机 UUID 作为 webhook 密钥，或自定义你自己的密钥（随机生成的复杂UUID可能有未知bug显示unallowed characters会无法hook，如有出现可换自定义）
 
 ### 部署步骤
 
