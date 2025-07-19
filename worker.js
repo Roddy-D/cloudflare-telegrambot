@@ -253,13 +253,13 @@ async function sendContactCard(chat_id, message_thread_id, user) {
       const pic = userPhotos.result.photos[0][userPhotos.result.photos[0].length - 1].file_id
       console.log(`Sending photo with file_id: ${pic}`)
       
-              const photoParams = {
-          chat_id: chat_id,
-          message_thread_id: message_thread_id,
-          photo: pic,
-          caption: `👤 ${user.first_name || user.id}\n\n📱 ${user.id}\n\n🔗 ${user.username ? `直接联系: @${user.username}` : `直接联系: tg://user?id=${user.id}`}`,
-          parse_mode: 'HTML'
-        }
+      const photoParams = {
+        chat_id: chat_id,
+        message_thread_id: message_thread_id,
+        photo: pic,
+        caption: `👤 ${user.first_name || user.id}\n\n📱 ${user.id}\n\n🔗 ${user.username ? `直接联系: @${user.username}` : `直接联系: tg://user?id=${user.id}`}`,
+        parse_mode: 'HTML'
+      }
         
         console.log(`Sending photo with params:`, photoParams)
         
@@ -273,12 +273,12 @@ async function sendContactCard(chat_id, message_thread_id, user) {
       return result
     } else {
       console.log(`No profile photo, sending text message`)
-              const messageParams = {
-          chat_id: chat_id,
-          message_thread_id: message_thread_id,
-          text: `👤 ${user.first_name || user.id}\n\n📱 ${user.id}\n\n🔗 ${user.username ? `直接联系: @${user.username}` : `直接联系: tg://user?id=${user.id}`}`,
-          parse_mode: 'HTML'
-        }
+      const messageParams = {
+        chat_id: chat_id,
+        message_thread_id: message_thread_id,
+        text: `👤 ${user.first_name || user.id}\n\n📱 ${user.id}\n\n🔗 ${user.username ? `直接联系: @${user.username}` : `直接联系: tg://user?id=${user.id}`}`,
+        parse_mode: 'HTML'
+      }
         
         console.log(`Sending text message with params:`, messageParams)
         
