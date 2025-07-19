@@ -1936,6 +1936,13 @@ async function handleWebhook(event) {
 async function registerWebhook(event, requestUrl, suffix, secret) {
   const webhookUrl = `${requestUrl.protocol}//${requestUrl.hostname}${suffix}`
   
+  // 调试信息
+  console.log('🔧 Webhook 注册详情:')
+  console.log('TOKEN:', TOKEN ? `前10位: ${TOKEN.slice(0, 10)}...` : '❌ 未配置')
+  console.log('SECRET:', secret ? '✅ 已配置' : '❌ 未配置')
+  console.log('Webhook URL:', webhookUrl)
+  console.log('API URL:', apiUrl('setWebhook'))
+  
   const r = await fetch(apiUrl('setWebhook'), {
     method: 'POST',
     headers: {
@@ -1947,6 +1954,15 @@ async function registerWebhook(event, requestUrl, suffix, secret) {
       allowed_updates: ['message', 'edited_message', 'callback_query']
     }),
   })
+
+  const result = await r.json()
+  console.log('📡 Telegram API 响应:', result)
+  
+  return new Response(JSON.stringify(result, null, 2), {
+    headers: { 'content-type': 'application/json' }
+  })
+}
+
 
   return new Response('ok' in (await r.json()) ? 'Ok' : 'Error')
 }
