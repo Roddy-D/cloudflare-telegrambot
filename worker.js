@@ -81,6 +81,8 @@ function deleteForumTopic(chat_id, message_thread_id) {
   }))
 }
 
+
+
 function getUserProfilePhotos(user_id, limit = 1) {
   return requestTelegram('getUserProfilePhotos', null, {
     user_id: user_id,
@@ -91,6 +93,9 @@ function getUserProfilePhotos(user_id, limit = 1) {
 function sendPhoto(msg = {}) {
   return requestTelegram('sendPhoto', makeReqBody(msg))
 }
+
+
+
 
 
 /**
@@ -135,6 +140,8 @@ class Database {
     await horr.put(`topic:${thread_id}`, JSON.stringify({ status, updated_at: Date.now() }))
   }
 
+
+
   // 用户状态相关
   async getUserState(user_id, key) {
     return await horr.get(`state:${user_id}:${key}`, { type: 'json' })
@@ -165,10 +172,11 @@ class Database {
   async setLastMessageTime(user_id, timestamp) {
     await horr.put(`lastmsg:${user_id}`, JSON.stringify(timestamp))
   }
+
+
 }
 
 const db = new Database()
-
 
 /**
  * 工具函数
@@ -228,29 +236,25 @@ async function updateUserDb(user) {
   } catch (error) {
     console.error('Error updating user database:', error)
     
+    // 检查是否是 KV 写入限制错误
+    if (isKVWriteLimitError(error)) {
+      // 获取用户现有数据以确定是否已有话题
+      const user_data = await db.getUser(user.id).catch(() => null)
+      const message_thread_id = user_data?.message_thread_id || null
+      
+      await handleKVLimitError(user, message_thread_id)
+    }
+    
     // 重新抛出错误以便上层处理
     throw error
   }
 }
-
 
 /**
  * 发送联系人卡片
  */
 async function sendContactCard(chat_id, message_thread_id, user) {
   console.log(`📱 sendContactCard called for user ${user.id}`)
-  const buttons = []
-  if (user.username) {
-    buttons.push([{
-      text: '👤 直接联络',
-      url: `https://t.me/${user.username}`
-    }])
-    console.log(`Added contact button for @${user.username}`)
-  }
-
-  const reply_markup = buttons.length > 0 ? {
-    inline_keyboard: buttons
-  } : undefined
 
   try {
     console.log(`Getting profile photos for user ${user.id}`)
@@ -265,14 +269,11 @@ async function sendContactCard(chat_id, message_thread_id, user) {
           chat_id: chat_id,
           message_thread_id: message_thread_id,
           photo: pic,
-          caption: `👤 ${mentionHtml(user.id, user.first_name || user.id)}\n\n📱 ${user.id}\n\n🔗 ${user.username ? `@${user.username}` : `直接联系: tg://user?id=${user.id}`}`,
+          caption: `👤 ${user.first_name || user.id}\n\n📱 ${user.id}\n\n🔗 ${user.username ? `直接联系: @${user.username}` : `直接联系: tg://user?id=${user.id}`}`,
           parse_mode: 'HTML'
         }
         
-        if (reply_markup) {
-          photoParams.reply_markup = reply_markup
-        }
-       
+
         console.log(`Sending photo with params:`, photoParams)
         
         const result = await sendPhoto(photoParams)
@@ -288,14 +289,11 @@ async function sendContactCard(chat_id, message_thread_id, user) {
               const messageParams = {
           chat_id: chat_id,
           message_thread_id: message_thread_id,
-          text: `👤 ${mentionHtml(user.id, user.first_name || user.id)}\n\n📱 ${user.id}\n\n🔗 ${user.username ? `@${user.username}` : `直接联系: tg://user?id=${user.id}`}`,
+          text: `👤 ${user.first_name || user.id}\n\n📱 ${user.id}\n\n🔗 ${user.username ? `直接联系: @${user.username}` : `直接联系: tg://user?id=${user.id}`}`,
           parse_mode: 'HTML'
         }
         
-        if (reply_markup) {
-          messageParams.reply_markup = reply_markup
-        }
-        
+
         console.log(`Sending text message with params:`, messageParams)
         
         const result = await sendMessage(messageParams)
@@ -333,6 +331,96 @@ async function handleStart(message) {
       text: `${mentionHtml(user.id, user.first_name || user.id)}：\n\n${WELCOME_MESSAGE}`,
       parse_mode: 'HTML'
     })
+  }
+}
+
+
+/**
+ * 检查是否是 KV 写入限制错误
+ */
+function isKVWriteLimitError(error) {
+  const errorMessage = (error.message || '').toLowerCase()
+  return errorMessage.includes('kv put() limit exceeded') || 
+         errorMessage.includes('kv write limit') ||
+         errorMessage.includes('quota exceeded')
+}
+
+// 用于跟踪每日已发送KV限制警告的用户（使用内存变量）
+let dailyKVAlertSent = new Set()
+let lastAlertDate = new Date().toDateString() // 记录上次警告的日期
+
+
+/**
+ * 处理 KV 写入限制错误
+ */
+async function handleKVLimitError(user, message_thread_id) {
+  const user_id = user.id
+  const userDisplayName = user.first_name || '用户'
+  const currentDate = new Date().toDateString()
+  
+  try {
+    // 检查是否是新的一天，如果是则清空警告记录
+    if (currentDate !== lastAlertDate) {
+      dailyKVAlertSent.clear()
+      lastAlertDate = currentDate
+      console.log(`🔄 Reset daily KV alert tracking for new date: ${currentDate}`)
+    }
+    
+    // 检查是否已经为该用户发送过警告
+    const alertKey = `${user_id}_${currentDate}`
+    if (!dailyKVAlertSent.has(alertKey)) {
+      // 还没有为该用户发送过警告，发送给管理员
+      let alertText = `🚨 <b>KV 存储限制警告</b>\n\n` +
+                     `⚠️ 已达到 Cloudflare KV 每日写入上限！\n\n` +
+                     `👤 用户信息：\n` +
+                     `• 姓名：${userDisplayName}\n` +
+                     `• 用户名：@${user.username || '无'}\n` +
+                     `• Telegram ID：<code>${user_id}</code>\n` +
+                      (user.username ? '' : `• 直接联系： tg://user?id=${user_id}\n`)  
+      
+      if (message_thread_id) {
+        alertText += `• 话题ID：${message_thread_id}\n`
+        alertText += `• 状态：已有话题，消息无法转发\n\n`
+      } else {
+        alertText += `• 状态：未创建话题，无法创建新话题\n\n`
+      }
+      
+      alertText += `📋 <b>影响：</b>\n` +
+                  `• 无法创建新话题\n` +
+                  `• 无法更新用户数据\n` +
+                  `• 无法转发用户消息\n\n` +
+                  `🔧 <b>建议：</b>\n` +
+                  `• 等待 UTC 时间重置（通常为每日 00:00）\n` +
+                  `• 考虑升级 Cloudflare 计划\n` +
+                  `• 检查是否有异常的写入操作\n\n` +
+                  `⏰ 时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}\n\n` +
+                  `ℹ️ 注意：同一用户每日仅提醒一次`
+      
+      await sendMessage({
+        chat_id: ADMIN_UID,
+        text: alertText,
+        parse_mode: 'HTML'
+      })
+      
+      // 记录已发送警告
+      dailyKVAlertSent.add(alertKey)
+      console.log(`✅ KV limit alert sent to admin for user ${user_id}`)
+    } else {
+      console.log(`⏭️ KV limit alert already sent for user ${user_id} today, skipping admin notification`)
+    }
+    
+    // 总是通知用户（不管是否已经通知过管理员）
+    await sendMessage({
+      chat_id: user_id,
+      text: `抱歉，由于系统存储限制，您的消息暂时无法送达。\n\n` +
+            `对方已收到通知，请明日重试或等待问题解决。\n\n` +
+            `如有紧急情况，请直接联系对方。`
+    })
+    
+    console.log(`✅ KV limit error handled for user ${user_id}, topic: ${message_thread_id || 'none'}`)
+    
+  } catch (alertError) {
+    console.error('❌ Failed to handle KV limit error:', alertError)
   }
 }
 
@@ -611,14 +699,22 @@ async function forwardMessageU2A(message) {
   } catch (error) {
     console.error('❌ Error in forwardMessageU2A:', error)
     
-    // 通用错误处理
+    // 检查是否是 KV 写入限制错误
+    if (isKVWriteLimitError(error)) {
+      const user_data = await db.getUser(user_id).catch(() => null)
+      const message_thread_id = user_data?.message_thread_id || null
+      
+      await handleKVLimitError(user, message_thread_id)
+      return
+    }
+    
+    // 其他错误的通用处理
     await sendMessage({
       chat_id: chat_id,
       text: '处理消息时发生错误，请稍后再试。'
     })
   }
 }
-
 
 /**
  * 管理员消息转发到用户 (a2u)
@@ -631,6 +727,7 @@ async function forwardMessageA2U(message) {
   if (!message_thread_id || user.is_bot) {
     return
   }
+
 
   // 查找目标用户
   const target_user = await findUserByThreadId(message_thread_id)
@@ -712,6 +809,7 @@ async function findUserByThreadId(thread_id) {
 }
 
 
+
 /**
  * 处理消息编辑
  */
@@ -775,7 +873,6 @@ async function handleEditedMessage(edited_message, is_from_user = true) {
     }
   }
 }
-
 
 /**
  * 清理话题命令
@@ -861,7 +958,6 @@ async function handleClearCommand(message) {
     })
   }
 }
-
 
 /**
  * 广播命令
@@ -961,7 +1057,6 @@ async function handleBroadcastCommand(message) {
   return broadcastPromise
 }
 
-
 /**
  * 处理屏蔽命令
  */
@@ -1013,7 +1108,6 @@ async function handleBlockCommand(message) {
   })
 }
 
-
 /**
  * 处理解除屏蔽命令
  */
@@ -1055,7 +1149,6 @@ async function handleUnblockCommand(message) {
   })
 }
 
-
 /**
  * 处理检查屏蔽状态命令
  */
@@ -1096,7 +1189,6 @@ async function handleCheckBlockCommand(message) {
     reply_to_message_id: message.message_id
   })
 }
-
 
 /**
  * 处理更新消息
@@ -1158,11 +1250,13 @@ async function onUpdate(update) {
         return await handleEditedMessage(edited_message, false)
       }
     }
+
+
+
   } catch (error) {
     console.error('Error processing update:', error)
   }
 }
-
 
 /**
  * 处理 Webhook 请求
@@ -1181,7 +1275,6 @@ async function handleWebhook(event) {
 
   return new Response('Ok')
 }
-
 
 /**
  * 注册 Webhook
@@ -1216,7 +1309,6 @@ async function registerWebhook(event, requestUrl, suffix, secret) {
   })
 }
 
-
 /**
  * 注销 Webhook
  */
@@ -1233,7 +1325,6 @@ async function unRegisterWebhook(event) {
 
   return new Response('ok' in (await r.json()) ? 'Ok' : 'Error')
 }
-
 
 /**
  * 主事件监听器
