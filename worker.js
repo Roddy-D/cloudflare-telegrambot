@@ -7,7 +7,6 @@ const ADMIN_GROUP_ID = ENV_ADMIN_GROUP_ID // 管理群组 ID (必须是开启话
 // === 选填变量 ===
 const WELCOME_MESSAGE = (typeof ENV_WELCOME_MESSAGE !== 'undefined') ? ENV_WELCOME_MESSAGE : '欢迎使用机器人' // 欢迎消息
 const MESSAGE_INTERVAL = (typeof ENV_MESSAGE_INTERVAL !== 'undefined') ? parseInt(ENV_MESSAGE_INTERVAL) || 1 : 1 // 消息间隔限制（秒）
-const DELETE_USER_MESSAGES = (typeof ENV_DELETE_USER_MESSAGES !== 'undefined') ? ENV_DELETE_USER_MESSAGES === 'true' : false // 清理话题时是否删除用户消息
 const DELETE_TOPIC_AS_BAN = (typeof ENV_DELETE_TOPIC_AS_BAN !== 'undefined') ? ENV_DELETE_TOPIC_AS_BAN === 'true' : false // 删除话题是否等同于永久封禁
 
 /**
@@ -892,36 +891,10 @@ async function handleClearCommand(message) {
       target_user.message_thread_id = null
       await db.setUser(target_user.user_id, target_user)
       
-      // 如果启用了删除用户消息功能
-      if (DELETE_USER_MESSAGES) {
-        // 获取所有相关消息映射
-        const mappedMessages = []
-        const list = await horr.list({ prefix: 'msgmap:u2a:' })
-        for (const key of list.keys) {
-          const value = await horr.get(key.name, { type: 'json' })
-          if (value) {
-            mappedMessages.push(parseInt(key.name.split(':')[2]))
-          }
-        }
-        
-        // 批量删除用户消息
-        if (mappedMessages.length > 0) {
-          const batchSize = 100
-          for (let i = 0; i < mappedMessages.length; i += batchSize) {
-            const batch = mappedMessages.slice(i, i + batchSize)
-            try {
-              await deleteMessages(target_user.user_id, batch)
-              console.log(`Deleted ${batch.length} messages for user ${target_user.user_id}`)
-            } catch (error) {
-              console.error(`Error deleting messages for user ${target_user.user_id}:`, error)
-            }
-          }
-        }
-        
-        // 清理消息映射
-        for (const key of list.keys) {
-          await horr.delete(key.name)
-        }
+      // 清理消息映射记录
+      const list = await horr.list({ prefix: 'msgmap:u2a:' })
+      for (const key of list.keys) {
+        await horr.delete(key.name)
       }
     }
     
