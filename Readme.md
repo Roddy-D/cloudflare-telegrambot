@@ -83,7 +83,7 @@
    - `ENV_DELETE_USER_MESSAGES`：清理话题时删除用户消息（true/false），默认为 false
    - `ENV_DELETE_TOPIC_AS_BAN`：删除话题视为永久封禁（true/false），默认为 false。false 时只会删除话题，对方只需要再发送一次消息即可再次新建话题
 
-4. **创建 KV 数据库**
+4. **创建并绑定 KV 数据库**
    - 在 Cloudflare 控制台中创建一个 KV Namespace（存储和数据库 - KV）
    - 名称设为 `horr`
    - 回到步骤 2 创建的 Worker 中绑定 - 添加绑定 KV：
@@ -92,7 +92,7 @@
 
 5. **部署代码**
    - 点击右上角 "编辑代码"
-   - 将 [worker.js](./worker.js) 的内容复制到编辑器中
+   - 将 [worker.js](./worker.js) 的内容复制到编辑器中（必须先填入变量，否则会无法部署）
    - 点击 "部署"
 
 6. **注册 Webhook**
