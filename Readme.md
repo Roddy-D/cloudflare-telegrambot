@@ -177,4 +177,4 @@
 - Cloudflare Workers 团队 - 提供优秀的无服务器平台
 - Telegram Bot API - 提供强大的机器人开发接口
   
-**注意**：本项目仅供学习和研究使用，请遵守相关法律法规和平台使用条款。本项目由本人使用cursor——Claude-4-sonnet花了两小时编写+三小时调试功能。
+**注意**：本项目仅供学习和研究使用，请遵守相关法律法规和平台使用条款。本项目由本人使用cursor——Claude-4-sonnet花了两小时编写+三小时调试功能。如有bug可以tg找 [我]( https://t.me/horrorself_bot ) 进行反馈
