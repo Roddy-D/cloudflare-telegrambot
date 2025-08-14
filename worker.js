@@ -195,6 +195,40 @@ function delay(ms) {
 }
 
 /**
+ * 发送“已送达”提示（每日一次）并在3秒后撤回
+ */
+async function maybeSendDeliveredNotice(sender_user_id, target_chat_id, options = {}) {
+  const { message_thread_id = null, reply_to_message_id = null, text = '您的消息已送达' } = options
+
+  try {
+    const today = new Date().toDateString()
+    const stateKey = 'delivered_notice'
+    const lastDate = await db.getUserState(sender_user_id, stateKey)
+
+    if (lastDate === today) {
+      return
+    }
+
+    const params = { chat_id: target_chat_id, text }
+    if (message_thread_id) params.message_thread_id = message_thread_id
+    if (reply_to_message_id) params.reply_to_message_id = reply_to_message_id
+
+    const sent = await sendMessage(params)
+    if (sent && sent.ok) {
+      await db.setUserState(sender_user_id, stateKey, today)
+      await delay(3000)
+      try {
+        await deleteMessage(target_chat_id, sent.result.message_id)
+      } catch (e) {
+        console.error('Failed to delete delivered notice:', e)
+      }
+    }
+  } catch (e) {
+    console.error('maybeSendDeliveredNotice error:', e)
+  }
+}
+
+/**
  * 用户数据库更新
  */
 async function updateUserDb(user) {
@@ -602,6 +636,8 @@ async function forwardMessageU2A(message) {
         console.log(`✅ Forwarded u2a: user(${user_id}) msg(${message.message_id}) -> group msg(${sent.result.message_id})`)
         console.log(`✅ Stored mapping: u2a:${message.message_id} -> ${sent.result.message_id}`)
         console.log(`✅ Stored mapping: a2u:${sent.result.message_id} -> ${message.message_id}`)
+        // 发送“已送达”提示（每日一次），3秒后撤回
+        await maybeSendDeliveredNotice(user_id, chat_id, { reply_to_message_id: message.message_id })
       } else {
         console.error(`❌ copyMessage failed, sent.ok = false`)
         console.error(`❌ copyMessage response:`, sent)
