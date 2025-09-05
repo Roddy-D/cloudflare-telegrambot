@@ -9,7 +9,7 @@
 
 This project is a Telegram message forwarding bot based on Cloudflare Worker. It is feature-rich and contains no ads.
 
-Tips: You can modify all Chinese prompt messages in the code (such as welcome text, error messages, block notifications, etc.) freely.
+**Tips: You can modify all Chinese prompt messages in the code (such as welcome text, error messages, block notifications, etc.) freely.**
 
 ### 🌟 Main Features
 
