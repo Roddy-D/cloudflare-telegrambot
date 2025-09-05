@@ -1,4 +1,4 @@
-中文 | [English](https://github.com/dhd2333/cloudflare-telegrambot/blob/main/README_en.md)
+中文 | [English](https://github.com/dhd2333/cloudflare-telegrambot/blob/main/Readme_en.md)
 
 # 消息转发机器人
 
