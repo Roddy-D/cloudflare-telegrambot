@@ -198,7 +198,7 @@ function delay(ms) {
  * 发送“已送达”提示（每日一次）并在3秒后撤回
  */
 async function maybeSendDeliveredNotice(sender_user_id, target_chat_id, options = {}) {
-  const { message_thread_id = null, reply_to_message_id = null, text = '您的消息已送达' } = options
+  const { message_thread_id = null, reply_to_message_id = null, text = '您的消息已送达\nYour message has been delivered' } = options
 
   try {
     const today = new Date().toDateString()
@@ -290,7 +290,7 @@ async function sendContactCard(chat_id, message_thread_id, user) {
         chat_id: chat_id,
         message_thread_id: message_thread_id,
         photo: pic,
-        caption: `👤 ${user.first_name || user.id}\n\n📱 ${user.id}\n\n🔗 ${user.username ? `直接联系: @${user.username}` : `直接联系: tg://user?id=${user.id}`}`,
+        caption: `👤 ${user.first_name || user.id}\n👤 ${user.first_name || user.id}\n\n📱 ${user.id}\n📱 ${user.id}\n\n🔗 ${user.username ? `直接联系: @${user.username}\nDirect contact: @${user.username}` : `直接联系: tg://user?id=${user.id}\nDirect contact: tg://user?id=${user.id}`}`,
         parse_mode: 'HTML'
       }
         
@@ -309,7 +309,7 @@ async function sendContactCard(chat_id, message_thread_id, user) {
       const messageParams = {
         chat_id: chat_id,
         message_thread_id: message_thread_id,
-        text: `👤 ${user.first_name || user.id}\n\n📱 ${user.id}\n\n🔗 ${user.username ? `直接联系: @${user.username}` : `直接联系: tg://user?id=${user.id}`}`,
+        text: `👤 ${user.first_name || user.id}\n👤 ${user.first_name || user.id}\n\n📱 ${user.id}\n📱 ${user.id}\n\n🔗 ${user.username ? `直接联系: @${user.username}\nDirect contact: @${user.username}` : `直接联系: tg://user?id=${user.id}\nDirect contact: tg://user?id=${user.id}`}`,
         parse_mode: 'HTML'
       }
         
@@ -341,12 +341,13 @@ async function handleStart(message) {
   if (user.id.toString() === ADMIN_UID) {
     await sendMessage({
       chat_id: user.id,
-      text: '你已成功激活机器人。'
+      text: '你已成功激活机器人。',
     })
   } else {
     await sendMessage({
       chat_id: user.id,
       text: `${mentionHtml(user.id, user.first_name || user.id)}：\n\n${WELCOME_MESSAGE}`,
+      // Welcome message with user mention
       parse_mode: 'HTML'
     })
   }
@@ -428,9 +429,9 @@ async function handleKVLimitError(user, message_thread_id) {
     // 总是通知用户（不管是否已经通知过管理员）
     await sendMessage({
       chat_id: user_id,
-      text: `抱歉，由于系统存储限制，您的消息暂时无法送达。\n\n` +
-            `对方已收到通知，请明日重试或等待问题解决。\n\n` +
-            `如有紧急情况，请直接联系对方。`
+      text: `抱歉，由于系统存储限制，您的消息暂时无法送达。\nSorry, due to system storage limitations, your message cannot be delivered temporarily.\n\n` +
+            `对方已收到通知，请明日重试或等待问题解决。\nHe has been notified, please try again tomorrow or wait for the issue to be resolved.\n\n` +
+            `如有紧急情况，请直接联系对方。\nIf there is an emergency, please contact him directly.`
     })
     
     console.log(`✅ KV limit error handled for user ${user_id}, topic: ${message_thread_id || 'none'}`)
@@ -459,7 +460,7 @@ async function forwardMessageU2A(message) {
         if (timeLeft > 0) {
           await sendMessage({
             chat_id: chat_id,
-            text: `发送消息过于频繁，请等待 ${timeLeft} 秒后再试。`
+            text: `发送消息过于频繁，请等待 ${timeLeft} 秒后再试。\nSending messages too frequently, please wait ${timeLeft} seconds before trying again.`
           })
           return
         }
@@ -472,7 +473,7 @@ async function forwardMessageU2A(message) {
     if (isBlocked) {
       await sendMessage({
         chat_id: chat_id,
-        text: '你已被屏蔽，无法发送消息。'
+        text: '你已被屏蔽，无法发送消息。\nYou have been blocked and cannot send messages.'
       })
       return
     }
@@ -514,7 +515,7 @@ async function forwardMessageU2A(message) {
       if (topicStatus.status === 'closed') {
         await sendMessage({
           chat_id: chat_id,
-          text: '对话已被对方关闭。您的消息暂时无法送达。如需继续，请等待或请求对方重新打开对话。'
+          text: '对话已被对方关闭。您的消息暂时无法送达。如需继续，请等待或请求对方重新打开对话。\nThe conversation has been closed by him. Your message cannot be delivered temporarily. If you need to continue, please wait or ask him to reopen the conversation.'
         })
         return
       } else if (topicStatus.status === 'deleted' || topicStatus.status === 'removed') {
@@ -569,7 +570,7 @@ async function forwardMessageU2A(message) {
         } else {
           await sendMessage({
             chat_id: chat_id,
-            text: '创建会话失败，请稍后再试或联系对方。'  
+            text: '创建会话失败，请稍后再试或联系对方。\nFailed to create session, please try again later or contact him.'  
           })
           return
         }
@@ -577,7 +578,7 @@ async function forwardMessageU2A(message) {
         console.error('Failed to create topic:', error)
         await sendMessage({
           chat_id: chat_id,
-          text: '创建会话时发生错误，请稍后再试。'
+          text: '创建会话时发生错误，请稍后再试。\nAn error occurred while creating the session, please try again later.'
         })
         return
       }
@@ -697,18 +698,18 @@ async function forwardMessageU2A(message) {
         if (!DELETE_TOPIC_AS_BAN) {
           await sendMessage({
             chat_id: chat_id,
-            text: '发送失败：你之前的对话已被删除。请重新发送一次当前消息。'
+            text: '发送失败：你之前的对话已被删除。请重新发送一次当前消息。\nSend failed: Your previous conversation has been deleted. Please resend the current message.'
           })
         } else {
           await sendMessage({
             chat_id: chat_id,
-            text: '发送失败：你的对话已被永久删除。消息无法送达。'
+            text: '发送失败：你的对话已被永久删除。消息无法送达。\nSend failed: Your conversation has been permanently deleted. Message cannot be delivered.'
           })
         }
       } else {
         await sendMessage({
           chat_id: chat_id,
-          text: '发送消息时遇到问题，请稍后再试。'
+          text: '发送消息时遇到问题，请稍后再试。\nEncountered a problem while sending the message, please try again later.'
         })
       }
     }
@@ -728,7 +729,7 @@ async function forwardMessageU2A(message) {
     // 其他错误的通用处理
     await sendMessage({
       chat_id: chat_id,
-      text: '处理消息时发生错误，请稍后再试。'
+      text: '处理消息时发生错误，请稍后再试。\nAn error occurred while processing the message, please try again later.'
     })
   }
 }
@@ -900,6 +901,7 @@ async function handleClearCommand(message) {
       chat_id: message.chat.id,
       message_thread_id: message_thread_id,
       text: '你没有权限执行此操作。',
+      // You don't have permission to perform this operation.
       reply_to_message_id: message.message_id
     })
     return
@@ -909,6 +911,7 @@ async function handleClearCommand(message) {
     await sendMessage({
       chat_id: message.chat.id,
       text: '请在需要清除的用户对话（话题）中执行此命令。',
+      // Please execute this command in the user conversation (topic) that needs to be cleared.
       reply_to_message_id: message.message_id
     })
     return
