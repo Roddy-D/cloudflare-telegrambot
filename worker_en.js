@@ -8,6 +8,7 @@ const ADMIN_GROUP_ID = ENV_ADMIN_GROUP_ID // Admin group ID (must be a supergrou
 const WELCOME_MESSAGE = (typeof ENV_WELCOME_MESSAGE !== 'undefined') ? ENV_WELCOME_MESSAGE : 'Welcome to the bot' // Welcome message
 const MESSAGE_INTERVAL = (typeof ENV_MESSAGE_INTERVAL !== 'undefined') ? parseInt(ENV_MESSAGE_INTERVAL) || 1 : 1 // Message interval limit (seconds)
 const DELETE_TOPIC_AS_BAN = (typeof ENV_DELETE_TOPIC_AS_BAN !== 'undefined') ? ENV_DELETE_TOPIC_AS_BAN === 'true' : false // Treat topic deletion as permanent ban
+const ENABLE_VERIFICATION = (typeof ENV_ENABLE_VERIFICATION !== 'undefined') ? ENV_ENABLE_VERIFICATION === 'true' : false // Enable verification code (disabled by default)
 
 /**
  * Telegram API wrapper
@@ -332,21 +333,77 @@ async function sendContactCard(chat_id, message_thread_id, user) {
 }
 
 /**
+ * Generate verification challenge and answer (completely random)
+ */
+function generateVerificationChallenge(user_id) {
+  // Randomly generate 4 digits
+  let challengeDigits = ''
+  for (let i = 0; i < 4; i++) {
+    challengeDigits += Math.floor(Math.random() * 10).toString()
+  }
+  
+  // Randomly generate offset (1-9, avoid 0 as it has no effect)
+  const offset = Math.floor(Math.random() * 9) + 1
+  
+  // Calculate correct answer
+  let answer = ''
+  for (let i = 0; i < challengeDigits.length; i++) {
+    const digit = parseInt(challengeDigits[i])
+    const newDigit = (digit + offset) % 10 // Keep only ones digit if over 9
+    answer += newDigit.toString()
+  }
+  
+  return {
+    challenge: challengeDigits,
+    answer: answer,
+    offset: offset
+  }
+}
+
+/**
  * Handle /start command
  */
 async function handleStart(message) {
   const user = message.from
-    await updateUserDb(user)
+  const user_id = user.id
+  const chat_id = message.chat.id
   
-  if (user.id.toString() === ADMIN_UID) {
+  await updateUserDb(user)
+  
+  if (user_id.toString() === ADMIN_UID) {
     await sendMessage({
-      chat_id: user.id,
+      chat_id: user_id,
       text: 'You have successfully activated the bot.'
     })
   } else {
+    // Check if verification is enabled
+    if (ENABLE_VERIFICATION) {
+      // Check if user is verified
+      const isVerified = await db.getUserState(user_id, 'verified')
+      
+      if (!isVerified) {
+        // Not verified, send verification code
+        const challenge = generateVerificationChallenge(user_id)
+        await db.setUserState(user_id, 'verification', {
+          challenge: challenge.challenge,
+          answer: challenge.answer,
+          totalAttempts: 0,
+          timestamp: Date.now()
+        })
+        
+        await sendMessage({
+          chat_id: chat_id,
+          text: `${mentionHtml(user_id, user.first_name || user_id)}, Welcome!\n\n🔐 Please enter the verification code\n\nThe code is each digit of the 4-digit number ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit`,
+          parse_mode: 'HTML'
+        })
+        return
+      }
+    }
+    
+    // Already verified or verification not enabled, send welcome message
     await sendMessage({
-      chat_id: user.id,
-      text: `${mentionHtml(user.id, user.first_name || user.id)}:\n\n${WELCOME_MESSAGE}`,
+      chat_id: chat_id,
+      text: `${mentionHtml(user_id, user.first_name || user_id)}:\n\n${WELCOME_MESSAGE}`,
       parse_mode: 'HTML'
     })
   }
@@ -449,7 +506,101 @@ async function forwardMessageU2A(message) {
   const chat_id = message.chat.id
 
   try {
-    // 1. Message rate limiting
+    // 1. Check verification status (only when verification is enabled)
+    if (ENABLE_VERIFICATION) {
+      const verificationState = await db.getUserState(user_id, 'verification')
+      const isVerified = await db.getUserState(user_id, 'verified')
+      
+      // If user is not verified
+      if (!isVerified) {
+      // If verification challenge hasn't been sent yet, send it
+      if (!verificationState) {
+        const challenge = generateVerificationChallenge(user_id)
+        await db.setUserState(user_id, 'verification', {
+          challenge: challenge.challenge,
+          answer: challenge.answer,
+          totalAttempts: 0,
+          timestamp: Date.now()
+        })
+        
+        await sendMessage({
+          chat_id: chat_id,
+          text: `🔐 Please enter the verification code\n\nThe code is each digit of the 4-digit number ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit`,
+          parse_mode: 'HTML'
+        })
+        return
+      }
+      
+      // Check if maximum attempts reached
+      const totalAttempts = verificationState.totalAttempts || 0
+      if (totalAttempts >= 10) {
+        await sendMessage({
+          chat_id: chat_id,
+          text: `❌ Too many failed verification attempts (10 times), access denied.`
+        })
+        return
+      }
+      
+      // User has received challenge, check answer
+      const userAnswer = message.text?.trim()
+      
+      if (!userAnswer) {
+        await sendMessage({
+          chat_id: chat_id,
+          text: `Please enter the numeric answer.`
+        })
+        return
+      }
+      
+      // Verify answer
+      if (userAnswer === verificationState.answer) {
+        // Verification successful
+        await db.setUserState(user_id, 'verified', true)
+        await db.deleteUserState(user_id, 'verification')
+        
+        await sendMessage({
+          chat_id: chat_id,
+          text: `✅ Verification successful! You can now send messages.`
+        })
+        return
+      } else {
+        // Verification failed, increment attempts
+        const newTotalAttempts = totalAttempts + 1
+        
+        // Check if limit reached
+        if (newTotalAttempts >= 10) {
+          await db.setUserState(user_id, 'verification', {
+            ...verificationState,
+            totalAttempts: newTotalAttempts
+          })
+          
+          await sendMessage({
+            chat_id: chat_id,
+            text: `❌ Maximum verification attempts reached (10 times), access denied.`
+          })
+          return
+        }
+        
+        // Generate new verification code
+        const challenge = generateVerificationChallenge(user_id)
+        await db.setUserState(user_id, 'verification', {
+          challenge: challenge.challenge,
+          answer: challenge.answer,
+          totalAttempts: newTotalAttempts,
+          timestamp: Date.now()
+        })
+        
+        await sendMessage({
+          chat_id: chat_id,
+          text: `❌ Verification failed (${newTotalAttempts}/10)\n\n🔐 Please re-enter the verification code\n\nThe code is each digit of the 4-digit number ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit`,
+          parse_mode: 'HTML'
+        })
+        return
+      }
+      }
+    }
+
+    // 2. Message rate limiting
     if (MESSAGE_INTERVAL > 0) {
       const lastMessageTime = await db.getLastMessageTime(user_id)
       const currentTime = Date.now()
@@ -467,7 +618,7 @@ async function forwardMessageU2A(message) {
       await db.setLastMessageTime(user_id, currentTime)
     }
 
-    // 2. Check if blocked
+    // 3. Check if blocked
     const isBlocked = await db.isUserBlocked(user_id)
     if (isBlocked) {
       await sendMessage({
@@ -477,10 +628,10 @@ async function forwardMessageU2A(message) {
       return
     }
 
-    // 3. Update user info
+    // 4. Update user info
     await updateUserDb(user)
 
-    // 4. Get or create topic
+    // 5. Get or create topic
     let user_data = await db.getUser(user_id)
     if (!user_data) {
       // If user data does not exist (possibly KV latency), wait and retry once
@@ -585,7 +736,7 @@ async function forwardMessageU2A(message) {
 
     console.log(`Final message_thread_id before forwarding: ${message_thread_id}`)
     
-    // 5. Handle message forwarding
+    // 6. Handle message forwarding
     console.log(`Starting message forwarding to topic ${message_thread_id}`)
     try {
       const params = { message_thread_id: message_thread_id }
