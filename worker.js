@@ -8,6 +8,7 @@ const ADMIN_GROUP_ID = ENV_ADMIN_GROUP_ID // 管理群组 ID (必须是开启话
 const WELCOME_MESSAGE = (typeof ENV_WELCOME_MESSAGE !== 'undefined') ? ENV_WELCOME_MESSAGE : '欢迎使用机器人' // 欢迎消息
 const MESSAGE_INTERVAL = (typeof ENV_MESSAGE_INTERVAL !== 'undefined') ? parseInt(ENV_MESSAGE_INTERVAL) || 1 : 1 // 消息间隔限制（秒）
 const DELETE_TOPIC_AS_BAN = (typeof ENV_DELETE_TOPIC_AS_BAN !== 'undefined') ? ENV_DELETE_TOPIC_AS_BAN === 'true' : false // 删除话题是否等同于永久封禁
+const ENABLE_VERIFICATION = (typeof ENV_ENABLE_VERIFICATION !== 'undefined') ? ENV_ENABLE_VERIFICATION === 'true' : false // 是否启用验证码验证（默认关闭）
 
 /**
  * Telegram API 请求封装
@@ -336,18 +337,45 @@ async function sendContactCard(chat_id, message_thread_id, user) {
  */
 async function handleStart(message) {
   const user = message.from
-    await updateUserDb(user)
+  const user_id = user.id
+  const chat_id = message.chat.id
   
-  if (user.id.toString() === ADMIN_UID) {
+  await updateUserDb(user)
+  
+  if (user_id.toString() === ADMIN_UID) {
     await sendMessage({
-      chat_id: user.id,
+      chat_id: user_id,
       text: '你已成功激活机器人。',
     })
   } else {
+    // 检查是否启用验证功能
+    if (ENABLE_VERIFICATION) {
+      // 检查用户是否已验证
+      const isVerified = await db.getUserState(user_id, 'verified')
+      
+      if (!isVerified) {
+        // 未验证，发送验证码
+        const challenge = generateVerificationChallenge(user_id)
+        await db.setUserState(user_id, 'verification', {
+          challenge: challenge.challenge,
+          answer: challenge.answer,
+          totalAttempts: 0,
+          timestamp: Date.now()
+        })
+        
+        await sendMessage({
+          chat_id: chat_id,
+          text: `${mentionHtml(user_id, user.first_name || user_id)}，欢迎使用！\n\n🔐 请输入验证码\n\n验证码是以下四位数 ${challenge.challenge} 的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n${mentionHtml(user_id, user.first_name || user_id)}, Welcome!\n\n🔐 Please enter the verification code\n\nThe code is a 4-digit number. The answer is each digit of ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit`,
+          parse_mode: 'HTML'
+        })
+        return
+      }
+    }
+    
+    // 已验证或未启用验证，发送欢迎消息
     await sendMessage({
-      chat_id: user.id,
-      text: `${mentionHtml(user.id, user.first_name || user.id)}：\n\n${WELCOME_MESSAGE}`,
-      // Welcome message with user mention
+      chat_id: chat_id,
+      text: `${mentionHtml(user_id, user.first_name || user_id)}：\n\n${WELCOME_MESSAGE}`,
       parse_mode: 'HTML'
     })
   }
@@ -442,6 +470,34 @@ async function handleKVLimitError(user, message_thread_id) {
 }
 
 /**
+ * 生成验证码挑战和答案（完全随机）
+ */
+function generateVerificationChallenge(user_id) {
+  // 随机生成四位数字
+  let challengeDigits = ''
+  for (let i = 0; i < 4; i++) {
+    challengeDigits += Math.floor(Math.random() * 10).toString()
+  }
+  
+  // 随机生成加数（1-9，避免0没有意义）
+  const offset = Math.floor(Math.random() * 9) + 1
+  
+  // 计算正确答案
+  let answer = ''
+  for (let i = 0; i < challengeDigits.length; i++) {
+    const digit = parseInt(challengeDigits[i])
+    const newDigit = (digit + offset) % 10 // 超过9则只保留个位数
+    answer += newDigit.toString()
+  }
+  
+  return {
+    challenge: challengeDigits,
+    answer: answer,
+    offset: offset
+  }
+}
+
+/**
  * 用户消息转发到管理员 (u2a)
  */
 async function forwardMessageU2A(message) {
@@ -450,7 +506,101 @@ async function forwardMessageU2A(message) {
   const chat_id = message.chat.id
 
   try {
-    // 1. 消息频率限制
+    // 1. 检查验证状态（仅当启用验证功能时）
+    if (ENABLE_VERIFICATION) {
+      const verificationState = await db.getUserState(user_id, 'verification')
+      const isVerified = await db.getUserState(user_id, 'verified')
+      
+      // 如果用户尚未验证
+      if (!isVerified) {
+      // 如果还没有发送验证挑战，发送挑战
+      if (!verificationState) {
+        const challenge = generateVerificationChallenge(user_id)
+        await db.setUserState(user_id, 'verification', {
+          challenge: challenge.challenge,
+          answer: challenge.answer,
+          totalAttempts: 0,
+          timestamp: Date.now()
+        })
+        
+        await sendMessage({
+          chat_id: chat_id,
+          text: `🔐 请输入验证码\n\n验证码是以下四位数 ${challenge.challenge} 的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n🔐 Please enter the verification code\n\nThe code is a 4-digit number. The answer is each digit of ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit`,
+          parse_mode: 'HTML'
+        })
+        return
+      }
+      
+      // 检查是否已达到最大尝试次数
+      const totalAttempts = verificationState.totalAttempts || 0
+      if (totalAttempts >= 10) {
+        await sendMessage({
+          chat_id: chat_id,
+          text: `❌ 验证失败次数过多（10次），已被禁止使用。\n❌ Too many failed attempts (10 times), access denied.`
+        })
+        return
+      }
+      
+      // 用户已收到挑战，检查答案
+      const userAnswer = message.text?.trim()
+      
+      if (!userAnswer) {
+        await sendMessage({
+          chat_id: chat_id,
+          text: `请输入数字答案。\nPlease enter the numeric answer.`
+        })
+        return
+      }
+      
+      // 验证答案
+      if (userAnswer === verificationState.answer) {
+        // 验证成功
+        await db.setUserState(user_id, 'verified', true)
+        await db.deleteUserState(user_id, 'verification')
+        
+        await sendMessage({
+          chat_id: chat_id,
+          text: `✅ 验证成功！现在您可以发送消息了。\n✅ Verification successful! You can now send messages.`
+        })
+        return
+      } else {
+        // 验证失败，增加尝试次数
+        const newTotalAttempts = totalAttempts + 1
+        
+        // 检查是否达到上限
+        if (newTotalAttempts >= 10) {
+          await db.setUserState(user_id, 'verification', {
+            ...verificationState,
+            totalAttempts: newTotalAttempts
+          })
+          
+          await sendMessage({
+            chat_id: chat_id,
+            text: `❌ 验证失败次数已达上限（10次），已被禁止使用。\n❌ Maximum verification attempts reached (10 times), access denied.`
+          })
+          return
+        }
+        
+        // 重新生成新的验证码
+        const challenge = generateVerificationChallenge(user_id)
+        await db.setUserState(user_id, 'verification', {
+          challenge: challenge.challenge,
+          answer: challenge.answer,
+          totalAttempts: newTotalAttempts,
+          timestamp: Date.now()
+        })
+        
+        await sendMessage({
+          chat_id: chat_id,
+          text: `❌ 验证失败（${newTotalAttempts}/10）\n\n🔐 请重新输入验证码\n\n验证码是以下四位数 ${challenge.challenge} 的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n❌ Verification failed (${newTotalAttempts}/10)\n\n🔐 Please re-enter the verification code\n\nThe code is a 4-digit number. The answer is each digit of ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit`,
+          parse_mode: 'HTML'
+        })
+        return
+      }
+      }
+    }
+
+    // 2. 消息频率限制
     if (MESSAGE_INTERVAL > 0) {
       const lastMessageTime = await db.getLastMessageTime(user_id)
       const currentTime = Date.now()
@@ -468,7 +618,7 @@ async function forwardMessageU2A(message) {
       await db.setLastMessageTime(user_id, currentTime)
     }
 
-    // 2. 检查是否被屏蔽
+    // 3. 检查是否被屏蔽
     const isBlocked = await db.isUserBlocked(user_id)
     if (isBlocked) {
       await sendMessage({
@@ -478,10 +628,10 @@ async function forwardMessageU2A(message) {
       return
     }
 
-    // 3. 更新用户信息
+    // 4. 更新用户信息
     await updateUserDb(user)
 
-    // 4. 获取或创建话题
+    // 5. 获取或创建话题
     let user_data = await db.getUser(user_id)
     if (!user_data) {
       // 如果用户数据不存在（可能是KV延迟），等待并重试一次
@@ -586,7 +736,7 @@ async function forwardMessageU2A(message) {
 
     console.log(`Final message_thread_id before forwarding: ${message_thread_id}`)
     
-    // 5. 处理消息转发
+    // 6. 处理消息转发
     console.log(`Starting message forwarding to topic ${message_thread_id}`)
     try {
       const params = { message_thread_id: message_thread_id }
