@@ -83,6 +83,7 @@
    - `ENV_WELCOME_MESSAGE`：欢迎消息，自行修改，默认为 欢迎使用机器人
    - `ENV_MESSAGE_INTERVAL`：消息间隔限制秒数，默认为 1。-1为不限制
    - `ENV_DELETE_TOPIC_AS_BAN`：删除话题视为永久封禁（true/false），默认为 false。false 时只会删除话题，对方只需要再发送一次消息即可再次新建话题
+   - `ENV_ENABLE_VERIFICATION`：是否开启验证码功能（true/false）。会在第一次开启聊天时自动发送
 
 4. **创建并绑定 KV 数据库**
    - 在 Cloudflare 控制台中创建一个 KV Namespace（存储和数据库 - KV）
