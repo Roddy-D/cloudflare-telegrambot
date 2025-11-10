@@ -26,6 +26,7 @@ I’ve done a preliminary translation of the Chinese version into English.
 - **Contact Card**: Automatically displays user avatar (if any) and direct contact info
 - **Broadcast Function**: Send notifications to all active users
 - **KV Storage Exhaustion Reminder**: If daily KV resources are exhausted and someone sends a message, the admin will be notified to prevent missing messages
+- **Verification Code:** Verify identity the first time you open a chat. Messages will only be allowed after verification.
 
 #### Technical Highlights
 - **Zero-Cost Deployment**: Fully free, based on Cloudflare Worker
