@@ -83,7 +83,8 @@ I’ve done a preliminary translation of the Chinese version into English.
    **Optional Variables:**
    - `ENV_WELCOME_MESSAGE`: Welcome message (default: “Welcome to the bot”)  
    - `ENV_MESSAGE_INTERVAL`: Message interval limit in seconds (default: 1, set -1 for no limit)  
-   - `ENV_DELETE_TOPIC_AS_BAN`: Delete topic = permanent ban (true/false, default: false). If false, only deletes the topic, and user can re-initiate by sending a new message.  
+   - `ENV_DELETE_TOPIC_AS_BAN`: Delete topic = permanent ban (true/false, default: false). If false, only deletes the topic, and user can re-initiate by sending a new message.
+   - `ENV_ENABLE_VERIFICATION`: Whether to enable CAPTCHA functionality (true/false). It will be automatically sent the first time a chat is opened.
 
 4. **Create & Bind KV Database**
    - In Cloudflare console, create a KV Namespace (Storage & Database → KV)
