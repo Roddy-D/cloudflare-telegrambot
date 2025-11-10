@@ -1,4 +1,4 @@
-// === Configuration variables ===
+// === Configuration variables === 
 const TOKEN = ENV_BOT_TOKEN // Obtain from @BotFather
 const WEBHOOK = '/endpoint'
 const SECRET = ENV_BOT_SECRET // A-Z, a-z, 0-9, _ and -
