@@ -93,6 +93,75 @@ function sendPhoto(msg = {}) {
 }
 
 /**
+ * 验证码缓存管理（使用 Cache API）
+ */
+class VerificationCache {
+  constructor() {
+    this.cacheName = 'verification-cache'
+  }
+
+  // 生成缓存键对应的 URL
+  _getCacheUrl(user_id, key) {
+    return `https://internal.cache/${user_id}/${key}`
+  }
+
+  // 获取验证码数据
+  async getVerification(user_id, key) {
+    try {
+      const cache = await caches.open(this.cacheName)
+      const cacheUrl = this._getCacheUrl(user_id, key)
+      const response = await cache.match(cacheUrl)
+      
+      if (!response) {
+        return null
+      }
+
+      const data = await response.json()
+      return data
+    } catch (error) {
+      console.error('Error getting verification from cache:', error)
+      return null
+    }
+  }
+
+  // 设置验证码数据（带过期时间）
+  async setVerification(user_id, key, value, expirationSeconds = null) {
+    try {
+      const cache = await caches.open(this.cacheName)
+      const cacheUrl = this._getCacheUrl(user_id, key)
+      
+      const headers = new Headers({
+        'Content-Type': 'application/json',
+        'Cache-Control': expirationSeconds 
+          ? `max-age=${expirationSeconds}` 
+          : 'max-age=86400' // 默认24小时
+      })
+
+      const response = new Response(JSON.stringify(value), { headers })
+      await cache.put(cacheUrl, response)
+      
+      return true
+    } catch (error) {
+      console.error('Error setting verification in cache:', error)
+      return false
+    }
+  }
+
+  // 删除验证码数据
+  async deleteVerification(user_id, key) {
+    try {
+      const cache = await caches.open(this.cacheName)
+      const cacheUrl = this._getCacheUrl(user_id, key)
+      await cache.delete(cacheUrl)
+      return true
+    } catch (error) {
+      console.error('Error deleting verification from cache:', error)
+      return false
+    }
+  }
+}
+
+/**
  * 数据库操作封装 (使用 KV 存储)
  */
 class Database {
@@ -134,7 +203,7 @@ class Database {
     await horr.put(`topic:${thread_id}`, JSON.stringify({ status, updated_at: Date.now() }))
   }
 
-  // 用户状态相关
+  // 用户状态相关（非验证码）
   async getUserState(user_id, key) {
     return await horr.get(`state:${user_id}:${key}`, { type: 'json' })
   }
@@ -168,6 +237,7 @@ class Database {
 }
 
 const db = new Database()
+const verificationCache = new VerificationCache()
 
 /**
  * 工具函数
@@ -352,18 +422,18 @@ async function handleStart(message) {
   } else {
     // 检查是否启用验证功能
     if (ENABLE_VERIFICATION) {
-      // 检查用户是否已验证
-      const isVerified = await db.getUserState(user_id, 'verified')
+      // 检查用户是否已验证（使用 Cache API）
+      const isVerified = await verificationCache.getVerification(user_id, 'verified')
       
       if (!isVerified) {
         // 未验证，发送验证码
         const challenge = generateVerificationChallenge(user_id)
-        await db.setUserState(user_id, 'verification', {
+        await verificationCache.setVerification(user_id, 'verification', {
           challenge: challenge.challenge,
           answer: challenge.answer,
           totalAttempts: 0,
           timestamp: Date.now()
-        }, 120) // 120秒后自动过期删除
+        }, 120) // 120秒后自动过期
         
         await sendMessage({
           chat_id: chat_id,
@@ -508,22 +578,22 @@ async function forwardMessageU2A(message) {
   const chat_id = message.chat.id
 
   try {
-    // 1. 检查验证状态（仅当启用验证功能时）
+    // 1. 检查验证状态（仅当启用验证功能时）- 使用 Cache API
     if (ENABLE_VERIFICATION) {
-      const verificationState = await db.getUserState(user_id, 'verification')
-      const isVerified = await db.getUserState(user_id, 'verified')
+      const verificationState = await verificationCache.getVerification(user_id, 'verification')
+      const isVerified = await verificationCache.getVerification(user_id, 'verified')
       
       // 如果用户尚未验证
       if (!isVerified) {
       // 如果还没有发送验证挑战，发送挑战
       if (!verificationState) {
         const challenge = generateVerificationChallenge(user_id)
-        await db.setUserState(user_id, 'verification', {
+        await verificationCache.setVerification(user_id, 'verification', {
           challenge: challenge.challenge,
           answer: challenge.answer,
           totalAttempts: 0,
           timestamp: Date.now()
-        }, 120) // 120秒后自动过期删除
+        }, 120) // 120秒后自动过期
         
         await sendMessage({
           chat_id: chat_id,
@@ -540,7 +610,7 @@ async function forwardMessageU2A(message) {
       
       if (timeElapsed > 60000) {
         // 验证码已过期，删除验证码数据
-        await db.deleteUserState(user_id, 'verification')
+        await verificationCache.deleteVerification(user_id, 'verification')
         
         await sendMessage({
           chat_id: chat_id,
@@ -573,8 +643,8 @@ async function forwardMessageU2A(message) {
       // 验证答案
       if (userAnswer === verificationState.answer) {
         // 验证成功
-        await db.setUserState(user_id, 'verified', true)
-        await db.deleteUserState(user_id, 'verification')
+        await verificationCache.setVerification(user_id, 'verified', true)
+        await verificationCache.deleteVerification(user_id, 'verification')
         
         await sendMessage({
           chat_id: chat_id,
@@ -587,10 +657,10 @@ async function forwardMessageU2A(message) {
         
         // 检查是否达到上限
         if (newTotalAttempts >= VERIFICATION_MAX_ATTEMPTS) {
-          await db.setUserState(user_id, 'verification', {
+          await verificationCache.setVerification(user_id, 'verification', {
             ...verificationState,
             totalAttempts: newTotalAttempts
-          }, 120) // 120秒后自动过期删除
+          }, 120) // 120秒后自动过期
           
           await sendMessage({
             chat_id: chat_id,
@@ -601,12 +671,12 @@ async function forwardMessageU2A(message) {
         
         // 重新生成新的验证码
         const challenge = generateVerificationChallenge(user_id)
-        await db.setUserState(user_id, 'verification', {
+        await verificationCache.setVerification(user_id, 'verification', {
           challenge: challenge.challenge,
           answer: challenge.answer,
           totalAttempts: newTotalAttempts,
           timestamp: Date.now()
-        }, 120) // 120秒后自动过期删除
+        }, 120) // 120秒后自动过期
         
         await sendMessage({
           chat_id: chat_id,
