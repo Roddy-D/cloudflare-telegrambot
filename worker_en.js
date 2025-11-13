@@ -1,4 +1,4 @@
-// === Configuration variables === 
+// === Configuration variables ===
 const TOKEN = ENV_BOT_TOKEN // Obtain from @BotFather
 const WEBHOOK = '/endpoint'
 const SECRET = ENV_BOT_SECRET // A-Z, a-z, 0-9, _ and -
@@ -9,6 +9,7 @@ const WELCOME_MESSAGE = (typeof ENV_WELCOME_MESSAGE !== 'undefined') ? ENV_WELCO
 const MESSAGE_INTERVAL = (typeof ENV_MESSAGE_INTERVAL !== 'undefined') ? parseInt(ENV_MESSAGE_INTERVAL) || 1 : 1 // Message interval limit (seconds)
 const DELETE_TOPIC_AS_BAN = (typeof ENV_DELETE_TOPIC_AS_BAN !== 'undefined') ? ENV_DELETE_TOPIC_AS_BAN === 'true' : false // Treat topic deletion as permanent ban
 const ENABLE_VERIFICATION = (typeof ENV_ENABLE_VERIFICATION !== 'undefined') ? ENV_ENABLE_VERIFICATION === 'true' : false // Enable verification code (disabled by default)
+const VERIFICATION_MAX_ATTEMPTS = (typeof ENV_VERIFICATION_MAX_ATTEMPTS !== 'undefined') ? parseInt(ENV_VERIFICATION_MAX_ATTEMPTS) || 10 : 10 // Maximum verification attempts (default 10)
 
 /**
  * Telegram API wrapper
@@ -138,8 +139,9 @@ class Database {
     return await horr.get(`state:${user_id}:${key}`, { type: 'json' })
   }
 
-  async setUserState(user_id, key, value) {
-    await horr.put(`state:${user_id}:${key}`, JSON.stringify(value))
+  async setUserState(user_id, key, value, expirationTtl = null) {
+    const options = expirationTtl ? { expirationTtl } : {}
+    await horr.put(`state:${user_id}:${key}`, JSON.stringify(value), options)
   }
 
   async deleteUserState(user_id, key) {
@@ -389,11 +391,11 @@ async function handleStart(message) {
           answer: challenge.answer,
           totalAttempts: 0,
           timestamp: Date.now()
-        })
+        }, 120) // Auto-expire after 120 seconds
         
         await sendMessage({
           chat_id: chat_id,
-          text: `${mentionHtml(user_id, user.first_name || user_id)}, Welcome!\n\n🔐 Please enter the verification code\n\nThe code is each digit of the 4-digit number ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit`,
+          text: `${mentionHtml(user_id, user.first_name || user_id)}, Welcome!\n\n🔐 Please enter the verification code\n\nThe code is each digit of the 4-digit number ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
           parse_mode: 'HTML'
         })
         return
@@ -521,22 +523,38 @@ async function forwardMessageU2A(message) {
           answer: challenge.answer,
           totalAttempts: 0,
           timestamp: Date.now()
-        })
+        }, 120) // Auto-expire after 120 seconds
         
         await sendMessage({
           chat_id: chat_id,
-          text: `🔐 Please enter the verification code\n\nThe code is each digit of the 4-digit number ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit`,
+          text: `🔐 Please enter the verification code\n\nThe code is each digit of the 4-digit number ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
           parse_mode: 'HTML'
+        })
+        return
+      }
+      
+      // Check if verification code has expired (1 minute = 60000 milliseconds)
+      const currentTime = Date.now()
+      const verificationTime = verificationState.timestamp || 0
+      const timeElapsed = currentTime - verificationTime
+      
+      if (timeElapsed > 60000) {
+        // Verification code expired, delete verification data
+        await db.deleteUserState(user_id, 'verification')
+        
+        await sendMessage({
+          chat_id: chat_id,
+          text: `⏰ Verification code expired\n\nYou did not reply within 1 minute, the code has expired.\n\nPlease send a new message to get a new verification code.`
         })
         return
       }
       
       // Check if maximum attempts reached
       const totalAttempts = verificationState.totalAttempts || 0
-      if (totalAttempts >= 10) {
+      if (totalAttempts >= VERIFICATION_MAX_ATTEMPTS) {
         await sendMessage({
           chat_id: chat_id,
-          text: `❌ Too many failed verification attempts (10 times), access denied.`
+          text: `❌ Too many failed verification attempts (${VERIFICATION_MAX_ATTEMPTS} times), access denied.`
         })
         return
       }
@@ -568,15 +586,15 @@ async function forwardMessageU2A(message) {
         const newTotalAttempts = totalAttempts + 1
         
         // Check if limit reached
-        if (newTotalAttempts >= 10) {
+        if (newTotalAttempts >= VERIFICATION_MAX_ATTEMPTS) {
           await db.setUserState(user_id, 'verification', {
             ...verificationState,
             totalAttempts: newTotalAttempts
-          })
+          }, 120) // Auto-expire after 120 seconds
           
           await sendMessage({
             chat_id: chat_id,
-            text: `❌ Maximum verification attempts reached (10 times), access denied.`
+            text: `❌ Maximum verification attempts reached (${VERIFICATION_MAX_ATTEMPTS} times), access denied.`
           })
           return
         }
@@ -588,11 +606,11 @@ async function forwardMessageU2A(message) {
           answer: challenge.answer,
           totalAttempts: newTotalAttempts,
           timestamp: Date.now()
-        })
+        }, 120) // Auto-expire after 120 seconds
         
         await sendMessage({
           chat_id: chat_id,
-          text: `❌ Verification failed (${newTotalAttempts}/10)\n\n🔐 Please re-enter the verification code\n\nThe code is each digit of the 4-digit number ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit`,
+          text: `❌ Verification failed (${newTotalAttempts}/${VERIFICATION_MAX_ATTEMPTS})\n\n🔐 Please re-enter the verification code\n\nThe code is each digit of the 4-digit number ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
           parse_mode: 'HTML'
         })
         return

@@ -9,6 +9,7 @@ const WELCOME_MESSAGE = (typeof ENV_WELCOME_MESSAGE !== 'undefined') ? ENV_WELCO
 const MESSAGE_INTERVAL = (typeof ENV_MESSAGE_INTERVAL !== 'undefined') ? parseInt(ENV_MESSAGE_INTERVAL) || 1 : 1 // 消息间隔限制（秒）
 const DELETE_TOPIC_AS_BAN = (typeof ENV_DELETE_TOPIC_AS_BAN !== 'undefined') ? ENV_DELETE_TOPIC_AS_BAN === 'true' : false // 删除话题是否等同于永久封禁
 const ENABLE_VERIFICATION = (typeof ENV_ENABLE_VERIFICATION !== 'undefined') ? ENV_ENABLE_VERIFICATION === 'true' : false // 是否启用验证码验证（默认关闭）
+const VERIFICATION_MAX_ATTEMPTS = (typeof ENV_VERIFICATION_MAX_ATTEMPTS !== 'undefined') ? parseInt(ENV_VERIFICATION_MAX_ATTEMPTS) || 10 : 10 // 验证码最大尝试次数（默认10次）
 
 /**
  * Telegram API 请求封装
@@ -138,8 +139,9 @@ class Database {
     return await horr.get(`state:${user_id}:${key}`, { type: 'json' })
   }
 
-  async setUserState(user_id, key, value) {
-    await horr.put(`state:${user_id}:${key}`, JSON.stringify(value))
+  async setUserState(user_id, key, value, expirationTtl = null) {
+    const options = expirationTtl ? { expirationTtl } : {}
+    await horr.put(`state:${user_id}:${key}`, JSON.stringify(value), options)
   }
 
   async deleteUserState(user_id, key) {
@@ -361,11 +363,11 @@ async function handleStart(message) {
           answer: challenge.answer,
           totalAttempts: 0,
           timestamp: Date.now()
-        })
+        }, 120) // 120秒后自动过期删除
         
         await sendMessage({
           chat_id: chat_id,
-          text: `${mentionHtml(user_id, user.first_name || user_id)}，欢迎使用！\n\n🔐 请输入验证码\n\n验证码是以下四位数 ${challenge.challenge} 的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n${mentionHtml(user_id, user.first_name || user_id)}, Welcome!\n\n🔐 Please enter the verification code\n\nThe code is a 4-digit number. The answer is each digit of ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit`,
+          text: `${mentionHtml(user_id, user.first_name || user_id)}，欢迎使用！\n\n🔐 请输入验证码\n\n验证码是以下四位数 ${challenge.challenge} 的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n⏰ 请在1分钟内回复验证码，否则将失效\n\n${mentionHtml(user_id, user.first_name || user_id)}, Welcome!\n\n🔐 Please enter the verification code\n\nThe code is a 4-digit number. The answer is each digit of ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
           parse_mode: 'HTML'
         })
         return
@@ -521,22 +523,38 @@ async function forwardMessageU2A(message) {
           answer: challenge.answer,
           totalAttempts: 0,
           timestamp: Date.now()
-        })
+        }, 120) // 120秒后自动过期删除
         
         await sendMessage({
           chat_id: chat_id,
-          text: `🔐 请输入验证码\n\n验证码是以下四位数 ${challenge.challenge} 的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n🔐 Please enter the verification code\n\nThe code is a 4-digit number. The answer is each digit of ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit`,
+          text: `🔐 请输入验证码\n\n验证码是以下四位数 ${challenge.challenge} 的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n⏰ 请在1分钟内回复验证码，否则将失效\n\n🔐 Please enter the verification code\n\nThe code is a 4-digit number. The answer is each digit of ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
           parse_mode: 'HTML'
+        })
+        return
+      }
+      
+      // 检查验证码是否过期（1分钟 = 60000毫秒）
+      const currentTime = Date.now()
+      const verificationTime = verificationState.timestamp || 0
+      const timeElapsed = currentTime - verificationTime
+      
+      if (timeElapsed > 60000) {
+        // 验证码已过期，删除验证码数据
+        await db.deleteUserState(user_id, 'verification')
+        
+        await sendMessage({
+          chat_id: chat_id,
+          text: `⏰ 验证码已失效\n\n您未在1分钟内回复验证码，验证码已失效。\n\n请重新发送消息以获取新的验证码。\n\n⏰ Verification code expired\n\nYou did not reply within 1 minute, the code has expired.\n\nPlease send a new message to get a new verification code.`
         })
         return
       }
       
       // 检查是否已达到最大尝试次数
       const totalAttempts = verificationState.totalAttempts || 0
-      if (totalAttempts >= 10) {
+      if (totalAttempts >= VERIFICATION_MAX_ATTEMPTS) {
         await sendMessage({
           chat_id: chat_id,
-          text: `❌ 验证失败次数过多（10次），已被禁止使用。\n❌ Too many failed attempts (10 times), access denied.`
+          text: `❌ 验证失败次数过多（${VERIFICATION_MAX_ATTEMPTS}次），已被禁止使用。\n❌ Too many failed attempts (${VERIFICATION_MAX_ATTEMPTS} times), access denied.`
         })
         return
       }
@@ -568,15 +586,15 @@ async function forwardMessageU2A(message) {
         const newTotalAttempts = totalAttempts + 1
         
         // 检查是否达到上限
-        if (newTotalAttempts >= 10) {
+        if (newTotalAttempts >= VERIFICATION_MAX_ATTEMPTS) {
           await db.setUserState(user_id, 'verification', {
             ...verificationState,
             totalAttempts: newTotalAttempts
-          })
+          }, 120) // 120秒后自动过期删除
           
           await sendMessage({
             chat_id: chat_id,
-            text: `❌ 验证失败次数已达上限（10次），已被禁止使用。\n❌ Maximum verification attempts reached (10 times), access denied.`
+            text: `❌ 验证失败次数已达上限（${VERIFICATION_MAX_ATTEMPTS}次），已被禁止使用。\n❌ Maximum verification attempts reached (${VERIFICATION_MAX_ATTEMPTS} times), access denied.`
           })
           return
         }
@@ -588,11 +606,11 @@ async function forwardMessageU2A(message) {
           answer: challenge.answer,
           totalAttempts: newTotalAttempts,
           timestamp: Date.now()
-        })
+        }, 120) // 120秒后自动过期删除
         
         await sendMessage({
           chat_id: chat_id,
-          text: `❌ 验证失败（${newTotalAttempts}/10）\n\n🔐 请重新输入验证码\n\n验证码是以下四位数 ${challenge.challenge} 的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n❌ Verification failed (${newTotalAttempts}/10)\n\n🔐 Please re-enter the verification code\n\nThe code is a 4-digit number. The answer is each digit of ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit`,
+          text: `❌ 验证失败（${newTotalAttempts}/${VERIFICATION_MAX_ATTEMPTS}）\n\n🔐 请重新输入验证码\n\n验证码是以下四位数 ${challenge.challenge} 的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n⏰ 请在1分钟内回复验证码，否则将失效\n\n❌ Verification failed (${newTotalAttempts}/${VERIFICATION_MAX_ATTEMPTS})\n\n🔐 Please re-enter the verification code\n\nThe code is a 4-digit number. The answer is each digit of ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
           parse_mode: 'HTML'
         })
         return
