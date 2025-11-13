@@ -1295,11 +1295,10 @@ async function handleBlockCommand(message) {
     return
   }
 
-  if (!message.reply_to_message) {
+  if (!message_thread_id) {
     await sendMessage({
       chat_id: message.chat.id,
-      message_thread_id: message_thread_id,
-      text: '请回复用户消息来使用屏蔽命令。',
+      text: '请到相应话题内使用屏蔽命令。',
       reply_to_message_id: message.message_id
     })
     return
@@ -1346,11 +1345,10 @@ async function handleUnblockCommand(message) {
     return
   }
 
-  if (!message.reply_to_message) {
+  if (!message_thread_id) {
     await sendMessage({
       chat_id: message.chat.id,
-      message_thread_id: message_thread_id,
-      text: '请回复用户消息来使用解除屏蔽命令。',
+      text: '请到相应话题内使用解除屏蔽命令。',
       reply_to_message_id: message.message_id
     })
     return
@@ -1387,34 +1385,72 @@ async function handleCheckBlockCommand(message) {
     return
   }
 
-  if (!message.reply_to_message) {
+  // 如果在话题内，检查该话题用户的屏蔽状态
+  if (message_thread_id) {
+    const target_user = await findUserByThreadId(message_thread_id)
+    if (!target_user) {
+      await sendMessage({
+        chat_id: message.chat.id,
+        message_thread_id: message_thread_id,
+        text: '找不到用户。',
+        reply_to_message_id: message.message_id
+      })
+      return
+    }
+
+    const isBlocked = await db.isUserBlocked(target_user.user_id)
     await sendMessage({
       chat_id: message.chat.id,
       message_thread_id: message_thread_id,
-      text: '请回复用户消息来检查屏蔽状态。',
+      text: `用户 ${target_user.user_id} 屏蔽状态: ${isBlocked ? '已屏蔽' : '未屏蔽'}`,
       reply_to_message_id: message.message_id
     })
     return
   }
 
-  const target_user = await findUserByThreadId(message_thread_id)
-  if (!target_user) {
+  // 如果不在话题内，列出所有被屏蔽的用户
+  try {
+    const allUsers = await db.getAllUsers()
+    const blockedUsers = []
+    
+    for (const u of allUsers) {
+      const isBlocked = await db.isUserBlocked(u.user_id)
+      if (isBlocked) {
+        blockedUsers.push(u)
+      }
+    }
+
+    if (blockedUsers.length === 0) {
+      await sendMessage({
+        chat_id: message.chat.id,
+        text: '✅ 当前没有被屏蔽的用户。',
+        reply_to_message_id: message.message_id
+      })
+      return
+    }
+
+    let responseText = `🚫 <b>被屏蔽用户列表</b> (共 ${blockedUsers.length} 人)\n\n`
+    
+    for (const u of blockedUsers) {
+      const userName = u.first_name || '未知'
+      const userInfo = u.username ? `@${u.username}` : `ID: ${u.user_id}`
+      responseText += `• ${userName} (${userInfo})\n`
+    }
+
     await sendMessage({
       chat_id: message.chat.id,
-      message_thread_id: message_thread_id,
-      text: '找不到用户。',
+      text: responseText,
+      parse_mode: 'HTML',
       reply_to_message_id: message.message_id
     })
-    return
+  } catch (error) {
+    console.error('Error checking blocked users:', error)
+    await sendMessage({
+      chat_id: message.chat.id,
+      text: '❌ 查询被屏蔽用户列表时出错。',
+      reply_to_message_id: message.message_id
+    })
   }
-
-  const isBlocked = await db.isUserBlocked(target_user.user_id)
-  await sendMessage({
-    chat_id: message.chat.id,
-    message_thread_id: message_thread_id,
-    text: `用户 ${target_user.user_id} 屏蔽状态: ${isBlocked ? '已屏蔽' : '未屏蔽'}`,
-    reply_to_message_id: message.message_id
-  })
 }
 
 /**

@@ -125,9 +125,9 @@ I’ve done a preliminary translation of the Chinese version into English.
 
 2. **Admin Commands** (commands are not forwarded to users)
    - `/clear`: Clear current topic (delete topic & related data, without blocking user)  
-   - `/block`: Block user (reply to bot’s message)  
-   - `/unblock`: Unblock user (reply to bot’s message)  
-   - `/checkblock`: Check user block status (reply to bot’s message)  
+   - `/block`: Block user (use directly within the corresponding topic)  
+   - `/unblock`: Unblock user (use directly within the corresponding topic)  
+   - `/checkblock`: Check user block status (use directly within the corresponding topic), or show a list of all blocked users (when used in the general topic)
    - `/broadcast`: Broadcast a message (reply to the message to send; it won’t appear in topic, sent directly to users)  
 
 3. **Topic Management** (alternative block/unblock, more convenient, no typing needed)

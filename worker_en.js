@@ -1223,11 +1223,10 @@ async function handleBlockCommand(message) {
     return
   }
 
-  if (!message.reply_to_message) {
+  if (!message_thread_id) {
     await sendMessage({
       chat_id: message.chat.id,
-      message_thread_id: message_thread_id,
-      text: 'Please reply to a user message to use the block command.',
+      text: 'Please use the block command in the relevant topic.',
       reply_to_message_id: message.message_id
     })
     return
@@ -1274,11 +1273,10 @@ async function handleUnblockCommand(message) {
     return
   }
 
-  if (!message.reply_to_message) {
+  if (!message_thread_id) {
     await sendMessage({
       chat_id: message.chat.id,
-      message_thread_id: message_thread_id,
-      text: 'Please reply to a user message to use the unblock command.',
+      text: 'Please use the unblock command in the relevant topic.',
       reply_to_message_id: message.message_id
     })
     return
@@ -1315,34 +1313,72 @@ async function handleCheckBlockCommand(message) {
     return
   }
 
-  if (!message.reply_to_message) {
+  // If in a topic, check that topic user's block status
+  if (message_thread_id) {
+    const target_user = await findUserByThreadId(message_thread_id)
+    if (!target_user) {
+      await sendMessage({
+        chat_id: message.chat.id,
+        message_thread_id: message_thread_id,
+        text: 'User not found.',
+        reply_to_message_id: message.message_id
+      })
+      return
+    }
+
+    const isBlocked = await db.isUserBlocked(target_user.user_id)
     await sendMessage({
       chat_id: message.chat.id,
       message_thread_id: message_thread_id,
-      text: 'Please reply to a user message to check block status.',
+      text: `User ${target_user.user_id} block status: ${isBlocked ? 'Blocked' : 'Not blocked'}`,
       reply_to_message_id: message.message_id
     })
     return
   }
 
-  const target_user = await findUserByThreadId(message_thread_id)
-  if (!target_user) {
+  // If not in a topic, list all blocked users
+  try {
+    const allUsers = await db.getAllUsers()
+    const blockedUsers = []
+    
+    for (const u of allUsers) {
+      const isBlocked = await db.isUserBlocked(u.user_id)
+      if (isBlocked) {
+        blockedUsers.push(u)
+      }
+    }
+
+    if (blockedUsers.length === 0) {
+      await sendMessage({
+        chat_id: message.chat.id,
+        text: '✅ No blocked users currently.',
+        reply_to_message_id: message.message_id
+      })
+      return
+    }
+
+    let responseText = `🚫 <b>Blocked Users List</b> (Total: ${blockedUsers.length})\n\n`
+    
+    for (const u of blockedUsers) {
+      const userName = u.first_name || 'Unknown'
+      const userInfo = u.username ? `@${u.username}` : `ID: ${u.user_id}`
+      responseText += `• ${userName} (${userInfo})\n`
+    }
+
     await sendMessage({
       chat_id: message.chat.id,
-      message_thread_id: message_thread_id,
-      text: 'User not found.',
+      text: responseText,
+      parse_mode: 'HTML',
       reply_to_message_id: message.message_id
     })
-    return
+  } catch (error) {
+    console.error('Error checking blocked users:', error)
+    await sendMessage({
+      chat_id: message.chat.id,
+      text: '❌ Error querying blocked users list.',
+      reply_to_message_id: message.message_id
+    })
   }
-
-  const isBlocked = await db.isUserBlocked(target_user.user_id)
-  await sendMessage({
-    chat_id: message.chat.id,
-    message_thread_id: message_thread_id,
-    text: `User ${target_user.user_id} block status: ${isBlocked ? 'Blocked' : 'Not blocked'}`,
-    reply_to_message_id: message.message_id
-  })
 }
 
 /**
