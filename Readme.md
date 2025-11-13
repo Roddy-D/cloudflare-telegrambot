@@ -3,7 +3,7 @@ D1 版本 | [KV 版本](https://github.com/dhd2333/cloudflare-telegrambot/blob/m
 # 消息转发机器人 - D1 数据库版本
 
 
-> 💡 **版本说明**：本文档为 D1 数据库版本（`worker_D1.js`）的部署指南。如果你是小规模使用或初次部署，建议使用 [KV 版本](https://github.com/dhd2333/cloudflare-telegrambot/blob/main/Readme_KV.md)（`worker.js`），部署更简单。
+> 💡 **版本说明**：本文档为 D1 数据库版本（`worker_D1.js`）的部署指南。如果你是小规模使用或初次部署，建议使用 [KV 版本](https://github.com/dhd2333/cloudflare-telegrambot/blob/main/Readme_KV.md)（`worker_KV.js`），部署更简单。
 
 ## 🎉 快速开始
 
@@ -38,7 +38,7 @@ D1 版本 | [KV 版本](https://github.com/dhd2333/cloudflare-telegrambot/blob/m
 
 ## 📊 D1 版本 vs KV 版本
 
-| 对比项 | KV 版本 (worker.js) | D1 版本 (worker_D1.js) |
+| 对比项 | KV 版本 (worker_KV.js) | D1 版本 (worker_D1.js) |
 |--------|---------------------|---------------------|
 | **数据库类型** | Cloudflare KV (键值存储) | Cloudflare D1 (SQLite) |
 | **读取配额** | 100,000/天 | 5,000,000/天 |

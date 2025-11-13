@@ -96,7 +96,7 @@ KV 版本 | [English(KV)](https://github.com/dhd2333/cloudflare-telegrambot/blob
 
 5. **部署代码**
    - 点击右上角 "编辑代码"
-   - 将 [worker.js](./worker.js) 的内容复制到编辑器中（必须先填入变量，否则会无法部署）
+   - 将 [worker_KV.js](./worker_KV.js) 的内容复制到编辑器中（必须先填入变量，否则会无法部署）
    - 点击 "部署"
 
 6. **注册 Webhook**
