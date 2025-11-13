@@ -1,4 +1,5 @@
-[中文](https://github.com/dhd2333/cloudflare-telegrambot) | English
+[中文（KV）](https://github.com/dhd2333/cloudflare-telegrambot/blob/main/Readme_KV.md) | English(KV) | [中文（D1）](https://github.com/dhd2333/cloudflare-telegrambot/blob/main/Readme.md)
+
 
 # Message Forwarding Bot
 
