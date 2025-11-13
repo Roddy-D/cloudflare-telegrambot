@@ -7,8 +7,8 @@ const ADMIN_GROUP_ID = ENV_ADMIN_GROUP_ID // 管理群组 ID (必须是开启话
 // === 选填变量 ===
 const WELCOME_MESSAGE = (typeof ENV_WELCOME_MESSAGE !== 'undefined') ? ENV_WELCOME_MESSAGE : '欢迎使用机器人' // 欢迎消息
 const MESSAGE_INTERVAL = (typeof ENV_MESSAGE_INTERVAL !== 'undefined') ? parseInt(ENV_MESSAGE_INTERVAL) || 1 : 1 // 消息间隔限制（秒）
-const DELETE_TOPIC_AS_BAN = (typeof ENV_DELETE_TOPIC_AS_BAN !== 'undefined') ? ENV_DELETE_TOPIC_AS_BAN === 'true' : false // 删除话题是否等同于永久封禁
-const ENABLE_VERIFICATION = (typeof ENV_ENABLE_VERIFICATION !== 'undefined') ? ENV_ENABLE_VERIFICATION === 'true' : false // 是否启用验证码验证（默认关闭）
+const DELETE_TOPIC_AS_BAN = (typeof ENV_DELETE_TOPIC_AS_BAN !== 'undefined') ? (ENV_DELETE_TOPIC_AS_BAN || '').toLowerCase() === 'true' : false // 删除话题是否等同于永久封禁
+const ENABLE_VERIFICATION = (typeof ENV_ENABLE_VERIFICATION !== 'undefined') ? (ENV_ENABLE_VERIFICATION || '').toLowerCase() === 'true' : false // 是否启用验证码验证（默认关闭）
 const VERIFICATION_MAX_ATTEMPTS = (typeof ENV_VERIFICATION_MAX_ATTEMPTS !== 'undefined') ? parseInt(ENV_VERIFICATION_MAX_ATTEMPTS) || 10 : 10 // 验证码最大尝试次数（默认10次）
 
 /**

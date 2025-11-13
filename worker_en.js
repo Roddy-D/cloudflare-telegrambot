@@ -7,8 +7,8 @@ const ADMIN_GROUP_ID = ENV_ADMIN_GROUP_ID // Admin group ID (must be a supergrou
 // === Optional variables ===
 const WELCOME_MESSAGE = (typeof ENV_WELCOME_MESSAGE !== 'undefined') ? ENV_WELCOME_MESSAGE : 'Welcome to the bot' // Welcome message
 const MESSAGE_INTERVAL = (typeof ENV_MESSAGE_INTERVAL !== 'undefined') ? parseInt(ENV_MESSAGE_INTERVAL) || 1 : 1 // Message interval limit (seconds)
-const DELETE_TOPIC_AS_BAN = (typeof ENV_DELETE_TOPIC_AS_BAN !== 'undefined') ? ENV_DELETE_TOPIC_AS_BAN === 'true' : false // Treat topic deletion as permanent ban
-const ENABLE_VERIFICATION = (typeof ENV_ENABLE_VERIFICATION !== 'undefined') ? ENV_ENABLE_VERIFICATION === 'true' : false // Enable verification code (disabled by default)
+const DELETE_TOPIC_AS_BAN = (typeof ENV_DELETE_TOPIC_AS_BAN !== 'undefined') ? (ENV_DELETE_TOPIC_AS_BAN || '').toLowerCase() === 'true' : false // Treat topic deletion as permanent ban
+const ENABLE_VERIFICATION = (typeof ENV_ENABLE_VERIFICATION !== 'undefined') ? (ENV_ENABLE_VERIFICATION || '').toLowerCase() === 'true' : false // Enable verification code (disabled by default)
 const VERIFICATION_MAX_ATTEMPTS = (typeof ENV_VERIFICATION_MAX_ATTEMPTS !== 'undefined') ? parseInt(ENV_VERIFICATION_MAX_ATTEMPTS) || 10 : 10 // Maximum verification attempts (default 10)
 
 /**
