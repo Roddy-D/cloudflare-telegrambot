@@ -522,7 +522,7 @@ async function handleStart(message) {
 ✅ Bot is activated and running normally.`
     
     await sendMessage({
-      chat_id: user_id,
+      chat_id: chat_id,  // Send to current chat (group or private)
       text: commandList,
       parse_mode: 'HTML'
     })
@@ -1598,29 +1598,31 @@ async function onUpdate(update) {
       const user = message.from
       const chat_id = message.chat.id
 
-      // Handle /start command
-      if (message.text === '/start') {
+      // Handle /start command (support /start and /start@botname formats)
+      if (message.text && (message.text === '/start' || message.text.startsWith('/start@'))) {
         return await handleStart(message)
       }
 
-      // Handle commands from admin (support both admin group and private chat)
+      // Handle commands from admin (support both admin group and private chat, support @botname format)
       if (user.id.toString() === ADMIN_UID && (chat_id.toString() === ADMIN_GROUP_ID || message.chat.type === 'private')) {
-        if (message.text === '/clear') {
+        const commandText = message.text?.split('@')[0] || '' // Extract command part, remove @botname
+        
+        if (commandText === '/clear') {
           return await handleClearCommand(message)
         }
-        if (message.text === '/broadcast') {
+        if (commandText === '/broadcast') {
           return await handleBroadcastCommand(message)
         }
-        if (message.text === '/block') {
+        if (commandText === '/block') {
           return await handleBlockCommand(message)
         }
-        if (message.text === '/unblock') {
+        if (commandText === '/unblock' || message.text?.startsWith('/unblock ')) {
           return await handleUnblockCommand(message)
         }
-        if (message.text === '/checkblock') {
+        if (commandText === '/checkblock') {
           return await handleCheckBlockCommand(message)
         }
-        if (message.text === '/del') {
+        if (commandText === '/del') {
           return await handleDeleteCommand(message)
         }
         // If other commands are used in private chat, show a hint

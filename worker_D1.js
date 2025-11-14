@@ -522,7 +522,7 @@ async function handleStart(message) {
 ✅ 机器人已激活并正常运行。`
     
     await sendMessage({
-      chat_id: user_id,
+      chat_id: chat_id,  // 发送到当前聊天（群组或私聊）
       text: commandList,
       parse_mode: 'HTML'
     })
@@ -1598,29 +1598,31 @@ async function onUpdate(update) {
       const user = message.from
       const chat_id = message.chat.id
 
-      // 处理 /start 命令
-      if (message.text === '/start') {
+      // 处理 /start 命令（支持 /start 和 /start@botname 格式）
+      if (message.text && (message.text === '/start' || message.text.startsWith('/start@'))) {
         return await handleStart(message)
       }
 
-      // 处理来自管理员的命令（支持管理群组和私聊）
+      // 处理来自管理员的命令（支持管理群组和私聊，支持 @botname 格式）
       if (user.id.toString() === ADMIN_UID && (chat_id.toString() === ADMIN_GROUP_ID || message.chat.type === 'private')) {
-        if (message.text === '/clear') {
+        const commandText = message.text?.split('@')[0] || '' // 提取命令部分，去掉 @botname
+        
+        if (commandText === '/clear') {
           return await handleClearCommand(message)
         }
-        if (message.text === '/broadcast') {
+        if (commandText === '/broadcast') {
           return await handleBroadcastCommand(message)
         }
-        if (message.text === '/block') {
+        if (commandText === '/block') {
           return await handleBlockCommand(message)
         }
-        if (message.text === '/unblock') {
+        if (commandText === '/unblock' || message.text?.startsWith('/unblock ')) {
           return await handleUnblockCommand(message)
         }
-        if (message.text === '/checkblock') {
+        if (commandText === '/checkblock') {
           return await handleCheckBlockCommand(message)
         }
-        if (message.text === '/del') {
+        if (commandText === '/del') {
           return await handleDeleteCommand(message)
         }
         // 如果是其他命令但在私聊中使用，给出提示
