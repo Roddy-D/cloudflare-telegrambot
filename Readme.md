@@ -1,9 +1,6 @@
-D1 版本 | [KV 版本](https://github.com/dhd2333/cloudflare-telegrambot/blob/main/Readme_KV.md)| [English(KV)](https://github.com/dhd2333/cloudflare-telegrambot/blob/main/Readme_en.md)
+中文 | [English](https://github.com/dhd2333/cloudflare-telegrambot/blob/main/Readme_en.md)
 
-# 消息转发机器人 - D1 数据库版本
-
-
-> 💡 **版本说明**：本文档为 D1 数据库版本（`worker_D1.js`）的部署指南。如果你是小规模使用或初次部署，建议使用 [KV 版本](https://github.com/dhd2333/cloudflare-telegrambot/blob/main/Readme_KV.md)（`worker_KV.js`），部署更简单。
+# 消息转发机器人
 
 ## 🎉 快速开始
 
@@ -25,9 +22,9 @@ D1 版本 | [KV 版本](https://github.com/dhd2333/cloudflare-telegrambot/blob/m
 - **消息频率限制**：防止用户过于频繁发送消息
 - **联系人卡片**：自动展示用户头像（如有）和直接联系方式
 - **广播功能**：向所有活跃用户发送通知
-- **验证码**：第一次开启聊天时，可以进行验证，通过后才允许发送消息
+- **验证码**：第一次开启聊天时，可以进行验证，通过后才允许发送消息，超过次数即屏蔽
 
-> 💡 **D1 版本优势**：D1 每天有 100,000 次写入配额（是 KV 的 100 倍），几乎不可能用尽，因此无需 KV 版本中的"存储用尽提醒"功能
+> 💡 **D1 版本优势**：D1 每天有 100,000 次写入配额（是 KV 的 100 倍），几乎不可能用尽
 
 #### 技术特点
 - **零成本部署**：基于 Cloudflare Worker，完全免费
@@ -36,9 +33,9 @@ D1 版本 | [KV 版本](https://github.com/dhd2333/cloudflare-telegrambot/blob/m
 - **数据持久化**：使用 D1 SQL 数据库，数据永不丢失
 - **高可用性**：无服务器架构，99.9% 可用性
 
-## 📊 D1 版本 vs KV 版本
+## 📊 D1 vs KV 
 
-| 对比项 | KV 版本 (worker_KV.js) | D1 版本 (worker_D1.js) |
+| 对比项 | KV（已停更） | D1 |
 |--------|---------------------|---------------------|
 | **数据库类型** | Cloudflare KV (键值存储) | Cloudflare D1 (SQLite) |
 | **读取配额** | 100,000/天 | 5,000,000/天 |
@@ -50,20 +47,6 @@ D1 版本 | [KV 版本](https://github.com/dhd2333/cloudflare-telegrambot/blob/m
 | **存储用尽提醒** | ✅ 有（容易达到限制） | ❌ 无（几乎不可能用尽） |
 | **适用场景** | 小规模用户 | 中大规模用户 |
 
-## 💡 何时选择 D1 版本？
-
-**建议使用 D1 版本**：
-- ✅ 预计日活用户 > 100 人
-- ✅ 需要数据分析和统计
-- ✅ 计划长期运营
-- ✅ 需要更高的写入配额（100,000 次/天 vs KV 的 1,000 次/天）
-- ✅ 不想担心存储配额用尽问题
-
-**可以使用 KV 版本**：
-- ✅ 日活用户 < 50 人
-- ✅ 追求更快的边缘读取速度
-- ✅ 不需要复杂查询
-- ✅ 简单测试或个人使用
 
 ## 🚀 自建教程
 
@@ -131,7 +114,7 @@ D1 版本 | [KV 版本](https://github.com/dhd2333/cloudflare-telegrambot/blob/m
 
 6. **部署代码**
    - 点击右上角 "编辑代码"
-   - 将 [worker_D1.js](./worker_D1.js) 的内容复制到编辑器中（必须先填入变量，否则会无法部署）
+   - 将 [worker.js](./worker.js) 的内容复制到编辑器中（必须先填入变量，否则会无法部署）
    - 点击 "部署"
 
 7. **初始化数据库表**
@@ -165,9 +148,10 @@ D1 版本 | [KV 版本](https://github.com/dhd2333/cloudflare-telegrambot/blob/m
 2. **管理命令**（命令不会被转发给对方）
    - `/clear`：清理当前话题（删除话题和相关数据，不会屏蔽用户）
    - `/block`：屏蔽用户（在相应话题内直接使用）
-   - `/unblock`：解除屏蔽（在相应话题内直接使用）
+   - `/unblock`：解除屏蔽（在相应话题内直接使用，或后面加对方ID，可通过checkblock查询）
    - `/checkblock`：检查用户屏蔽状态（在相应话题内直接使用），展示屏蔽状态列表（在 general 话题中使用）
    - `/broadcast`：广播消息（回复要广播的消息后使用，广播的消息不会出现在话题聊天中，由机器人直接发送给对方）
+   - `/del`：删除对方与机器人的消息（回复你需要删除的消息使用），仅48小时内的消息生效，超出即使提示生效也不会生效
 
 3. **话题管理**（另一种封禁/屏蔽方式，更便捷，无需输入）
    - 关闭话题：用户无法发送消息，即临时屏蔽

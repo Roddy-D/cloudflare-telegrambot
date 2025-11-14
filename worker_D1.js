@@ -499,9 +499,32 @@ async function handleStart(message) {
   await updateUserDb(user)
   
   if (user_id.toString() === ADMIN_UID) {
+    const commandList = `🤖 <b>机器人管理命令列表</b>
+
+<b>话题管理：</b>
+• /clear - 删除话题并清理数据
+• /del - 删除对方与机器人的消息（回复要删除的消息），仅48小时内的消息生效，超出48小时即使提示生效也不会生效
+
+<b>用户管理：</b>
+• /block - 屏蔽用户（在话题内使用）
+• /unblock - 解除屏蔽（在话题内使用或 /unblock [用户ID]）
+• /checkblock - 查看屏蔽列表（话题外）或检查单个用户（话题内）
+
+<b>消息管理：</b>
+• /broadcast - 群发消息（回复要群发的消息）
+
+<b>配置信息：</b>
+• 验证功能：${ENABLE_VERIFICATION ? '已启用' : '已禁用'}
+• 最大验证次数：${VERIFICATION_MAX_ATTEMPTS}次
+• 消息间隔：${MESSAGE_INTERVAL}秒
+• 删除话题视为永久封禁：${DELETE_TOPIC_AS_BAN ? '是' : '否'}
+
+✅ 机器人已激活并正常运行。`
+    
     await sendMessage({
       chat_id: user_id,
-      text: '你已成功激活机器人。',
+      text: commandList,
+      parse_mode: 'HTML'
     })
   } else {
     // 检查是否启用验证功能
@@ -574,8 +597,13 @@ async function forwardMessageU2A(message) {
   const chat_id = message.chat.id
 
   try {
-    // 1. 检查验证状态（仅当启用验证功能时）- 使用 Cache API
-    if (ENABLE_VERIFICATION) {
+    // 1. 管理员跳过所有检查
+    if (user_id.toString() === ADMIN_UID) {
+      // 管理员直接跳过验证、屏蔽、频率限制等检查
+      // 继续处理消息转发
+    } else {
+      // 2. 检查验证状态（仅当启用验证功能时）- 使用 Cache API
+      if (ENABLE_VERIFICATION) {
       const verificationState = await verificationCache.getVerification(user_id, 'verification')
       const isVerified = await verificationCache.getVerification(user_id, 'verified')
       
@@ -618,9 +646,12 @@ async function forwardMessageU2A(message) {
       // 检查是否已达到最大尝试次数
       const totalAttempts = verificationState.totalAttempts || 0
       if (totalAttempts >= VERIFICATION_MAX_ATTEMPTS) {
+        // 永久屏蔽用户
+        await db.blockUser(user_id, true)
+        
         await sendMessage({
           chat_id: chat_id,
-          text: `❌ 验证失败次数过多（${VERIFICATION_MAX_ATTEMPTS}次），已被禁止使用。\n❌ Too many failed attempts (${VERIFICATION_MAX_ATTEMPTS} times), access denied.`
+          text: `❌ 验证失败次数过多（${VERIFICATION_MAX_ATTEMPTS}次），已被永久屏蔽。\n❌ Too many failed attempts (${VERIFICATION_MAX_ATTEMPTS} times), permanently blocked.`
         })
         return
       }
@@ -653,14 +684,12 @@ async function forwardMessageU2A(message) {
         
         // 检查是否达到上限
         if (newTotalAttempts >= VERIFICATION_MAX_ATTEMPTS) {
-          await verificationCache.setVerification(user_id, 'verification', {
-            ...verificationState,
-            totalAttempts: newTotalAttempts
-          }, 120) // 120秒后自动过期
+          // 永久屏蔽用户
+          await db.blockUser(user_id, true)
           
           await sendMessage({
             chat_id: chat_id,
-            text: `❌ 验证失败次数已达上限（${VERIFICATION_MAX_ATTEMPTS}次），已被禁止使用。\n❌ Maximum verification attempts reached (${VERIFICATION_MAX_ATTEMPTS} times), access denied.`
+            text: `❌ 验证失败次数已达上限（${VERIFICATION_MAX_ATTEMPTS}次），已被永久屏蔽。\n❌ Maximum verification attempts reached (${VERIFICATION_MAX_ATTEMPTS} times), permanently blocked.`
           })
           return
         }
@@ -682,10 +711,10 @@ async function forwardMessageU2A(message) {
         return
       }
       }
-    }
+      }
 
-    // 2. 消息频率限制
-    if (MESSAGE_INTERVAL > 0) {
+      // 3. 消息频率限制
+      if (MESSAGE_INTERVAL > 0) {
       const lastMessageTime = await db.getLastMessageTime(user_id)
       const currentTime = Date.now()
       
@@ -699,23 +728,24 @@ async function forwardMessageU2A(message) {
           return
         }
       }
-      await db.setLastMessageTime(user_id, currentTime)
+        await db.setLastMessageTime(user_id, currentTime)
+      }
+
+      // 4. 检查是否被屏蔽
+      const isBlocked = await db.isUserBlocked(user_id)
+      if (isBlocked) {
+        await sendMessage({
+          chat_id: chat_id,
+          text: '你已被屏蔽，无法发送消息。\nYou have been blocked and cannot send messages.'
+        })
+        return
+      }
     }
 
-    // 3. 检查是否被屏蔽
-    const isBlocked = await db.isUserBlocked(user_id)
-    if (isBlocked) {
-      await sendMessage({
-        chat_id: chat_id,
-        text: '你已被屏蔽，无法发送消息。\nYou have been blocked and cannot send messages.'
-      })
-      return
-    }
-
-    // 4. 更新用户信息
+    // 5. 更新用户信息
     await updateUserDb(user)
 
-    // 5. 获取或创建话题
+    // 6. 获取或创建话题
     let user_data = await db.getUser(user_id)
     if (!user_data) {
       // 如果用户数据不存在（可能是延迟），等待并重试一次
@@ -820,7 +850,7 @@ async function forwardMessageU2A(message) {
 
     console.log(`Final message_thread_id before forwarding: ${message_thread_id}`)
     
-    // 6. 处理消息转发
+    // 7. 处理消息转发
     console.log(`Starting message forwarding to topic ${message_thread_id}`)
     try {
       const params = { message_thread_id: message_thread_id }
@@ -1267,6 +1297,88 @@ async function handleBroadcastCommand(message) {
 }
 
 /**
+ * 处理删除消息命令
+ */
+async function handleDeleteCommand(message) {
+  const user = message.from
+  const message_thread_id = message.message_thread_id
+
+  if (user.id.toString() !== ADMIN_UID) {
+    return
+  }
+
+  if (!message_thread_id) {
+    await sendMessage({
+      chat_id: message.chat.id,
+      text: '请在话题内使用此命令。',
+      reply_to_message_id: message.message_id
+    })
+    return
+  }
+
+  if (!message.reply_to_message) {
+    await sendMessage({
+      chat_id: message.chat.id,
+      message_thread_id: message_thread_id,
+      text: '请回复要删除的消息来使用此命令。',
+      reply_to_message_id: message.message_id
+    })
+    return
+  }
+
+  const target_user = await findUserByThreadId(message_thread_id)
+  if (!target_user) {
+    await sendMessage({
+      chat_id: message.chat.id,
+      message_thread_id: message_thread_id,
+      text: '找不到目标用户。',
+      reply_to_message_id: message.message_id
+    })
+    return
+  }
+
+  // 查找对应的用户侧消息ID
+  const admin_message_id = message.reply_to_message.message_id
+  const user_message_id = await db.getMessageMap(`a2u:${admin_message_id}`)
+
+  if (!user_message_id) {
+    await sendMessage({
+      chat_id: message.chat.id,
+      message_thread_id: message_thread_id,
+      text: '未找到对应的用户消息映射，可能是系统消息或已被删除。',
+      reply_to_message_id: message.message_id
+    })
+    return
+  }
+
+  try {
+    // 删除用户侧的消息
+    await deleteMessage(target_user.user_id, user_message_id)
+    
+    // 删除命令消息本身
+    await deleteMessage(message.chat.id, message.message_id)
+    
+    // 发送删除成功提示
+    await sendMessage({
+      chat_id: message.chat.id,
+      message_thread_id: message_thread_id,
+      text: '✅ 已删除用户侧的消息。',
+      reply_to_message_id: admin_message_id
+    })
+    
+    console.log(`Admin deleted message: admin_msg(${admin_message_id}) -> user_msg(${user_message_id})`)
+  } catch (error) {
+    console.error('Error deleting message:', error)
+    await sendMessage({
+      chat_id: message.chat.id,
+      message_thread_id: message_thread_id,
+      text: `❌ 删除消息失败: ${error.description || error.message}`,
+      reply_to_message_id: message.message_id
+    })
+  }
+}
+
+/**
  * 处理屏蔽命令
  */
 async function handleBlockCommand(message) {
@@ -1327,31 +1439,72 @@ async function handleUnblockCommand(message) {
     return
   }
 
-  if (!message_thread_id) {
-    await sendMessage({
-      chat_id: message.chat.id,
-      text: '请到相应话题内使用解除屏蔽命令。',
-      reply_to_message_id: message.message_id
-    })
-    return
-  }
+  // 检查是否提供了用户ID参数（格式：/unblock 123456）
+  const commandMatch = message.text?.match(/^\/unblock\s+(\d+)/)
+  if (commandMatch) {
+    const target_user_id = commandMatch[1]
+    
+    // 检查该用户是否存在
+    const target_user = await db.getUser(target_user_id)
+    if (!target_user) {
+      await sendMessage({
+        chat_id: message.chat.id,
+        message_thread_id: message_thread_id,
+        text: `找不到用户 ID: ${target_user_id}`,
+        reply_to_message_id: message.message_id
+      })
+      return
+    }
 
-  const target_user = await findUserByThreadId(message_thread_id)
-  if (!target_user) {
+    // 检查是否被屏蔽
+    const isBlocked = await db.isUserBlocked(target_user_id)
+    if (!isBlocked) {
+      await sendMessage({
+        chat_id: message.chat.id,
+        message_thread_id: message_thread_id,
+        text: `用户 ${target_user_id} 未被屏蔽。`,
+        reply_to_message_id: message.message_id
+      })
+      return
+    }
+
+    await db.blockUser(target_user_id, false)
     await sendMessage({
       chat_id: message.chat.id,
       message_thread_id: message_thread_id,
-      text: '找不到要解除屏蔽的用户。',
+      text: `✅ 用户 ${target_user_id} (${target_user.first_name || '未知'}) 已解除屏蔽。`,
       reply_to_message_id: message.message_id
     })
     return
   }
 
-  await db.blockUser(target_user.user_id, false)
+  // 如果在话题内且没有提供用户ID，解除该话题用户的屏蔽
+  if (message_thread_id) {
+    const target_user = await findUserByThreadId(message_thread_id)
+    if (!target_user) {
+      await sendMessage({
+        chat_id: message.chat.id,
+        message_thread_id: message_thread_id,
+        text: '找不到要解除屏蔽的用户。',
+        reply_to_message_id: message.message_id
+      })
+      return
+    }
+
+    await db.blockUser(target_user.user_id, false)
+    await sendMessage({
+      chat_id: message.chat.id,
+      message_thread_id: message_thread_id,
+      text: `✅ 用户 ${target_user.user_id} 已解除屏蔽。`,
+      reply_to_message_id: message.message_id
+    })
+    return
+  }
+
+  // 既不在话题内，也没有提供用户ID
   await sendMessage({
     chat_id: message.chat.id,
-    message_thread_id: message_thread_id,
-    text: `用户 ${target_user.user_id} 已解除屏蔽。`,
+    text: '请在话题内使用此命令，或使用格式：/unblock [用户ID]',
     reply_to_message_id: message.message_id
   })
 }
@@ -1415,7 +1568,7 @@ async function handleCheckBlockCommand(message) {
     
     for (const u of blockedUsers) {
       const userName = u.first_name || '未知'
-      const userInfo = u.username ? `@${u.username}` : `ID: ${u.user_id}`
+      const userInfo = u.username ? `@${u.username} | ID: ${u.user_id}` : `ID: ${u.user_id}`
       responseText += `• ${userName} (${userInfo})\n`
     }
 
@@ -1450,8 +1603,8 @@ async function onUpdate(update) {
         return await handleStart(message)
       }
 
-      // 处理来自管理员的命令
-      if (user.id.toString() === ADMIN_UID && chat_id.toString() === ADMIN_GROUP_ID) {
+      // 处理来自管理员的命令（支持管理群组和私聊）
+      if (user.id.toString() === ADMIN_UID && (chat_id.toString() === ADMIN_GROUP_ID || message.chat.type === 'private')) {
         if (message.text === '/clear') {
           return await handleClearCommand(message)
         }
@@ -1466,6 +1619,18 @@ async function onUpdate(update) {
         }
         if (message.text === '/checkblock') {
           return await handleCheckBlockCommand(message)
+        }
+        if (message.text === '/del') {
+          return await handleDeleteCommand(message)
+        }
+        // 如果是其他命令但在私聊中使用，给出提示
+        if (message.chat.type === 'private' && ['/clear', '/del'].includes(message.text)) {
+          await sendMessage({
+            chat_id: chat_id,
+            text: '此命令需要在管理群组的话题内使用。',
+            reply_to_message_id: message.message_id
+          })
+          return
         }
       }
 
@@ -1531,6 +1696,7 @@ async function registerWebhook(event, requestUrl, suffix, secret) {
   console.log('Webhook URL:', webhookUrl)
   console.log('API URL:', apiUrl('setWebhook'))
   
+  // 注册 Webhook
   const r = await fetch(apiUrl('setWebhook'), {
     method: 'POST',
     headers: {
@@ -1545,6 +1711,28 @@ async function registerWebhook(event, requestUrl, suffix, secret) {
 
   const result = await r.json()
   console.log('📡 Telegram API 响应:', result)
+  
+  // 注册机器人命令（只注册 /start，其他命令隐藏）
+  try {
+    const commandsResult = await fetch(apiUrl('setMyCommands'), {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        commands: [
+          {
+            command: 'start',
+            description: '启动机器人 / Start the bot'
+          }
+        ]
+      }),
+    })
+    const commandsData = await commandsResult.json()
+    console.log('📋 命令注册响应:', commandsData)
+  } catch (error) {
+    console.error('❌ 命令注册失败:', error)
+  }
   
   return new Response(JSON.stringify(result, null, 2), {
     headers: { 'content-type': 'application/json' }

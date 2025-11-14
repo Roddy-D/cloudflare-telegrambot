@@ -1,18 +1,30 @@
-// === Configuration variables ===
-const TOKEN = ENV_BOT_TOKEN // Obtain from @BotFather
-const WEBHOOK = '/endpoint'
-const SECRET = ENV_BOT_SECRET // A-Z, a-z, 0-9, _ and -
-const ADMIN_UID = ENV_ADMIN_UID // Administrator user ID
-const ADMIN_GROUP_ID = ENV_ADMIN_GROUP_ID // Admin group ID (must be a supergroup with topics enabled)
-// === Optional variables ===
-const WELCOME_MESSAGE = (typeof ENV_WELCOME_MESSAGE !== 'undefined') ? ENV_WELCOME_MESSAGE : 'Welcome to the bot' // Welcome message
-const MESSAGE_INTERVAL = (typeof ENV_MESSAGE_INTERVAL !== 'undefined') ? parseInt(ENV_MESSAGE_INTERVAL) || 1 : 1 // Message interval limit (seconds)
-const DELETE_TOPIC_AS_BAN = (typeof ENV_DELETE_TOPIC_AS_BAN !== 'undefined') ? (ENV_DELETE_TOPIC_AS_BAN || '').toLowerCase() === 'true' : false // Treat topic deletion as permanent ban
-const ENABLE_VERIFICATION = (typeof ENV_ENABLE_VERIFICATION !== 'undefined') ? (ENV_ENABLE_VERIFICATION || '').toLowerCase() === 'true' : false // Enable verification code (disabled by default)
-const VERIFICATION_MAX_ATTEMPTS = (typeof ENV_VERIFICATION_MAX_ATTEMPTS !== 'undefined') ? parseInt(ENV_VERIFICATION_MAX_ATTEMPTS) || 10 : 10 // Maximum verification attempts (default 10)
+// === Configuration variables (obtained from env) ===
+let TOKEN = null
+let WEBHOOK = '/endpoint'
+let SECRET = null
+let ADMIN_UID = null
+let ADMIN_GROUP_ID = null
+let WELCOME_MESSAGE = 'Welcome to the bot'
+let MESSAGE_INTERVAL = 1
+let DELETE_TOPIC_AS_BAN = false
+let ENABLE_VERIFICATION = false
+let VERIFICATION_MAX_ATTEMPTS = 10
+
+// Initialize configuration variables
+function initConfig(env) {
+  TOKEN = env.ENV_BOT_TOKEN
+  SECRET = env.ENV_BOT_SECRET
+  ADMIN_UID = env.ENV_ADMIN_UID
+  ADMIN_GROUP_ID = env.ENV_ADMIN_GROUP_ID
+  WELCOME_MESSAGE = env.ENV_WELCOME_MESSAGE || 'Welcome to the bot'
+  MESSAGE_INTERVAL = env.ENV_MESSAGE_INTERVAL ? parseInt(env.ENV_MESSAGE_INTERVAL) || 1 : 1
+  DELETE_TOPIC_AS_BAN = (env.ENV_DELETE_TOPIC_AS_BAN || '').toLowerCase() === 'true'
+  ENABLE_VERIFICATION = (env.ENV_ENABLE_VERIFICATION || '').toLowerCase() === 'true'
+  VERIFICATION_MAX_ATTEMPTS = env.ENV_VERIFICATION_MAX_ATTEMPTS ? parseInt(env.ENV_VERIFICATION_MAX_ATTEMPTS) || 10 : 10
+}
 
 /**
- * Telegram API wrapper
+ * Telegram API request wrapper
  */
 function apiUrl(methodName, params = null) {
   let query = ''
@@ -93,81 +105,234 @@ function sendPhoto(msg = {}) {
 }
 
 /**
- * Database wrapper (using Cloudflare KV storage)
+ * Verification code cache management (using Cache API)
+ */
+class VerificationCache {
+  constructor() {
+    this.cacheName = 'verification-cache'
+  }
+
+  // Generate cache key URL
+  _getCacheUrl(user_id, key) {
+    return `https://internal.cache/${user_id}/${key}`
+  }
+
+  // Get verification code data
+  async getVerification(user_id, key) {
+    try {
+      const cache = await caches.open(this.cacheName)
+      const cacheUrl = this._getCacheUrl(user_id, key)
+      const response = await cache.match(cacheUrl)
+      
+      if (!response) {
+        return null
+      }
+
+      const data = await response.json()
+      return data
+    } catch (error) {
+      console.error('Error getting verification from cache:', error)
+      return null
+    }
+  }
+
+  // Set verification code data (with expiration time)
+  async setVerification(user_id, key, value, expirationSeconds = null) {
+    try {
+      const cache = await caches.open(this.cacheName)
+      const cacheUrl = this._getCacheUrl(user_id, key)
+      
+      const headers = new Headers({
+        'Content-Type': 'application/json',
+        'Cache-Control': expirationSeconds 
+          ? `max-age=${expirationSeconds}` 
+          : 'max-age=86400' // Default 24 hours
+      })
+
+      const response = new Response(JSON.stringify(value), { headers })
+      await cache.put(cacheUrl, response)
+      
+      return true
+    } catch (error) {
+      console.error('Error setting verification in cache:', error)
+      return false
+    }
+  }
+
+  // Delete verification code data
+  async deleteVerification(user_id, key) {
+    try {
+      const cache = await caches.open(this.cacheName)
+      const cacheUrl = this._getCacheUrl(user_id, key)
+      await cache.delete(cacheUrl)
+      return true
+    } catch (error) {
+      console.error('Error deleting verification from cache:', error)
+      return false
+    }
+  }
+}
+
+/**
+ * Database operation wrapper (using D1 database)
  */
 class Database {
+  constructor(d1) {
+    this.d1 = d1
+  }
+
   // User related
   async getUser(user_id) {
-    const user = await horr.get(`user:${user_id}`, { type: 'json' })
-    return user
+    const result = await this.d1.prepare(
+      'SELECT * FROM users WHERE user_id = ?'
+    ).bind(user_id.toString()).first()
+    
+    if (!result) return null
+    
+    return {
+      user_id: result.user_id,
+      first_name: result.first_name,
+      last_name: result.last_name,
+      username: result.username,
+      message_thread_id: result.message_thread_id,
+      created_at: result.created_at,
+      updated_at: result.updated_at
+    }
   }
 
   async setUser(user_id, userData) {
-    await horr.put(`user:${user_id}`, JSON.stringify(userData))
+    await this.d1.prepare(
+      `INSERT OR REPLACE INTO users 
+       (user_id, first_name, last_name, username, message_thread_id, created_at, updated_at) 
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      user_id.toString(),
+      userData.first_name || null,
+      userData.last_name || null,
+      userData.username || null,
+      userData.message_thread_id || null,
+      userData.created_at || Date.now(),
+      userData.updated_at || Date.now()
+    ).run()
   }
 
   async getAllUsers() {
-    const list = await horr.list({ prefix: 'user:' })
-    const users = []
-    for (const key of list.keys) {
-      const user = await horr.get(key.name, { type: 'json' })
-      if (user) users.push(user)
-    }
-    return users
+    const result = await this.d1.prepare(
+      'SELECT * FROM users'
+    ).all()
+    return result.results || []
   }
 
   // Message mapping related
   async getMessageMap(key) {
-    return await horr.get(`msgmap:${key}`, { type: 'json' })
+    const result = await this.d1.prepare(
+      'SELECT mapped_value FROM message_mappings WHERE mapping_key = ?'
+    ).bind(key).first()
+    return result?.mapped_value || null
   }
 
   async setMessageMap(key, value) {
-    await horr.put(`msgmap:${key}`, JSON.stringify(value))
+    await this.d1.prepare(
+      'INSERT OR REPLACE INTO message_mappings (mapping_key, mapped_value, created_at) VALUES (?, ?, ?)'
+    ).bind(key, value || null, Date.now()).run()
   }
 
   // Topic status related
   async getTopicStatus(thread_id) {
-    return await horr.get(`topic:${thread_id}`, { type: 'json' }) || { status: 'opened' }
+    const result = await this.d1.prepare(
+      'SELECT status, updated_at FROM topic_status WHERE thread_id = ?'
+    ).bind(thread_id).first()
+    return result || { status: 'opened' }
   }
 
   async setTopicStatus(thread_id, status) {
-    await horr.put(`topic:${thread_id}`, JSON.stringify({ status, updated_at: Date.now() }))
+    await this.d1.prepare(
+      'INSERT OR REPLACE INTO topic_status (thread_id, status, updated_at) VALUES (?, ?, ?)'
+    ).bind(thread_id || null, status || 'opened', Date.now()).run()
   }
 
-  // User state related
+  // User state related (non-verification)
   async getUserState(user_id, key) {
-    return await horr.get(`state:${user_id}:${key}`, { type: 'json' })
+    const result = await this.d1.prepare(
+      'SELECT state_value, expiry_time FROM user_states WHERE user_id = ? AND state_key = ?'
+    ).bind(user_id.toString(), key).first()
+    
+    if (!result) return null
+    
+    // Check if expired
+    if (result.expiry_time && Date.now() > result.expiry_time) {
+      await this.deleteUserState(user_id, key)
+      return null
+    }
+    
+    return JSON.parse(result.state_value)
   }
 
   async setUserState(user_id, key, value, expirationTtl = null) {
-    const options = expirationTtl ? { expirationTtl } : {}
-    await horr.put(`state:${user_id}:${key}`, JSON.stringify(value), options)
+    const expiryTime = expirationTtl ? Date.now() + (expirationTtl * 1000) : null
+    await this.d1.prepare(
+      'INSERT OR REPLACE INTO user_states (user_id, state_key, state_value, expiry_time) VALUES (?, ?, ?, ?)'
+    ).bind(user_id.toString(), key || 'unknown', JSON.stringify(value), expiryTime).run()
   }
 
   async deleteUserState(user_id, key) {
-    await horr.delete(`state:${user_id}:${key}`)
+    await this.d1.prepare(
+      'DELETE FROM user_states WHERE user_id = ? AND state_key = ?'
+    ).bind(user_id.toString(), key).run()
   }
 
   // Blocked user related
   async isUserBlocked(user_id) {
-    return await horr.get(`blocked:${user_id}`, { type: 'json' }) || false
+    const result = await this.d1.prepare(
+      'SELECT blocked FROM blocked_users WHERE user_id = ?'
+    ).bind(user_id.toString()).first()
+    return result?.blocked === 1 || false
   }
 
   async blockUser(user_id, blocked = true) {
-    await horr.put(`blocked:${user_id}`, JSON.stringify(blocked))
+    if (blocked) {
+      await this.d1.prepare(
+        'INSERT OR REPLACE INTO blocked_users (user_id, blocked, blocked_at) VALUES (?, ?, ?)'
+      ).bind(user_id.toString(), 1, Date.now()).run()
+    } else {
+      await this.d1.prepare(
+        'DELETE FROM blocked_users WHERE user_id = ?'
+      ).bind(user_id.toString()).run()
+    }
   }
 
   // Message rate limiting
   async getLastMessageTime(user_id) {
-    return await horr.get(`lastmsg:${user_id}`, { type: 'json' }) || 0
+    const result = await this.d1.prepare(
+      'SELECT last_message_time FROM message_rates WHERE user_id = ?'
+    ).bind(user_id.toString()).first()
+    return result?.last_message_time || 0
   }
 
   async setLastMessageTime(user_id, timestamp) {
-    await horr.put(`lastmsg:${user_id}`, JSON.stringify(timestamp))
+    await this.d1.prepare(
+      'INSERT OR REPLACE INTO message_rates (user_id, last_message_time) VALUES (?, ?)'
+    ).bind(user_id.toString(), timestamp || Date.now()).run()
+  }
+
+  // Cleanup expired data (call periodically)
+  async cleanupExpiredStates() {
+    const now = Date.now()
+    await this.d1.prepare(
+      'DELETE FROM user_states WHERE expiry_time IS NOT NULL AND expiry_time < ?'
+    ).bind(now).run()
+  }
+
+  // Delete all message mappings for a user
+  async deleteUserMessageMappings(user_id) {
+    await this.d1.prepare(
+      'DELETE FROM message_mappings WHERE mapping_key LIKE ?'
+    ).bind(`u2a:${user_id}:%`).run()
   }
 }
 
-const db = new Database()
+let db = null
+const verificationCache = new VerificationCache()
 
 /**
  * Utility functions
@@ -259,17 +424,6 @@ async function updateUserDb(user) {
     }
   } catch (error) {
     console.error('Error updating user database:', error)
-    
-    // Check if this is a KV write limit error
-    if (isKVWriteLimitError(error)) {
-      // Get existing user data to determine whether a topic already exists
-      const user_data = await db.getUser(user.id).catch(() => null)
-      const message_thread_id = user_data?.message_thread_id || null
-      
-      await handleKVLimitError(user, message_thread_id)
-    }
-    
-    // Re-throw error for upper-level handling
     throw error
   }
 }
@@ -335,6 +489,78 @@ async function sendContactCard(chat_id, message_thread_id, user) {
 }
 
 /**
+ * Handle /start command
+ */
+async function handleStart(message) {
+  const user = message.from
+  const user_id = user.id
+  const chat_id = message.chat.id
+  
+  await updateUserDb(user)
+  
+  if (user_id.toString() === ADMIN_UID) {
+    const commandList = `🤖 <b>Bot Management Commands</b>
+
+<b>Topic Management:</b>
+• /clear - Delete topic and clean up data
+• /del - Delete messages between the user and the bot (reply to the message to delete), only effective for messages within 48 hours, beyond 48 hours even if it prompts success it won't actually work
+
+<b>User Management:</b>
+• /block - Block user (use in topic)
+• /unblock - Unblock user (use in topic or /unblock [user_id])
+• /checkblock - View block list (outside topic) or check single user (in topic)
+
+<b>Message Management:</b>
+• /broadcast - Broadcast message (reply to the message to broadcast)
+
+<b>Configuration:</b>
+• Verification: ${ENABLE_VERIFICATION ? 'Enabled' : 'Disabled'}
+• Max verification attempts: ${VERIFICATION_MAX_ATTEMPTS} times
+• Message interval: ${MESSAGE_INTERVAL}s
+• Delete topic as ban: ${DELETE_TOPIC_AS_BAN ? 'Yes' : 'No'}
+
+✅ Bot is activated and running normally.`
+    
+    await sendMessage({
+      chat_id: user_id,
+      text: commandList,
+      parse_mode: 'HTML'
+    })
+  } else {
+    // Check if verification is enabled
+    if (ENABLE_VERIFICATION) {
+      // Check if user is verified (using Cache API)
+      const isVerified = await verificationCache.getVerification(user_id, 'verified')
+      
+      if (!isVerified) {
+        // Not verified, send verification code
+        const challenge = generateVerificationChallenge(user_id)
+        await verificationCache.setVerification(user_id, 'verification', {
+          challenge: challenge.challenge,
+          answer: challenge.answer,
+          totalAttempts: 0,
+          timestamp: Date.now()
+        }, 120) // Auto-expire after 120 seconds
+        
+        await sendMessage({
+          chat_id: chat_id,
+          text: `${mentionHtml(user_id, user.first_name || user_id)}, Welcome!\n\n🔐 Please enter the verification code\n\nThe code is each digit of the 4-digit number ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
+          parse_mode: 'HTML'
+        })
+        return
+      }
+    }
+    
+    // Already verified or verification not enabled, send welcome message
+    await sendMessage({
+      chat_id: chat_id,
+      text: `${mentionHtml(user_id, user.first_name || user_id)}:\n\n${WELCOME_MESSAGE}`,
+      parse_mode: 'HTML'
+    })
+  }
+}
+
+/**
  * Generate verification challenge and answer (completely random)
  */
 function generateVerificationChallenge(user_id) {
@@ -363,143 +589,6 @@ function generateVerificationChallenge(user_id) {
 }
 
 /**
- * Handle /start command
- */
-async function handleStart(message) {
-  const user = message.from
-  const user_id = user.id
-  const chat_id = message.chat.id
-  
-  await updateUserDb(user)
-  
-  if (user_id.toString() === ADMIN_UID) {
-    await sendMessage({
-      chat_id: user_id,
-      text: 'You have successfully activated the bot.'
-    })
-  } else {
-    // Check if verification is enabled
-    if (ENABLE_VERIFICATION) {
-      // Check if user is verified
-      const isVerified = await db.getUserState(user_id, 'verified')
-      
-      if (!isVerified) {
-        // Not verified, send verification code
-        const challenge = generateVerificationChallenge(user_id)
-        await db.setUserState(user_id, 'verification', {
-          challenge: challenge.challenge,
-          answer: challenge.answer,
-          totalAttempts: 0,
-          timestamp: Date.now()
-        }, 120) // Auto-expire after 120 seconds
-        
-        await sendMessage({
-          chat_id: chat_id,
-          text: `${mentionHtml(user_id, user.first_name || user_id)}, Welcome!\n\n🔐 Please enter the verification code\n\nThe code is each digit of the 4-digit number ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
-          parse_mode: 'HTML'
-        })
-        return
-      }
-    }
-    
-    // Already verified or verification not enabled, send welcome message
-    await sendMessage({
-      chat_id: chat_id,
-      text: `${mentionHtml(user_id, user.first_name || user_id)}:\n\n${WELCOME_MESSAGE}`,
-      parse_mode: 'HTML'
-    })
-  }
-}
-
-/**
- * Check if it is a KV write limit error
- */
-function isKVWriteLimitError(error) {
-  const errorMessage = (error.message || '').toLowerCase()
-  return errorMessage.includes('kv put() limit exceeded') || 
-         errorMessage.includes('kv write limit') ||
-         errorMessage.includes('quota exceeded')
-}
-
-// Track users who have received the daily KV limit warning (in-memory)
-let dailyKVAlertSent = new Set()
-let lastAlertDate = new Date().toDateString() // Record the date of the last warning
-
-/**
- * Handle KV write limit errors
- */
-async function handleKVLimitError(user, message_thread_id) {
-  const user_id = user.id
-  const userDisplayName = user.first_name || 'User'
-  const currentDate = new Date().toDateString()
-  
-  try {
-    // Check if a new day has started; if so, clear alert tracking
-    if (currentDate !== lastAlertDate) {
-      dailyKVAlertSent.clear()
-      lastAlertDate = currentDate
-      console.log(`🔄 Reset daily KV alert tracking for new date: ${currentDate}`)
-    }
-    
-    // Check whether an alert has already been sent for this user today
-    const alertKey = `${user_id}_${currentDate}`
-    if (!dailyKVAlertSent.has(alertKey)) {
-      // Not yet alerted for this user today; send to admin
-      let alertText = `🚨 <b>KV Storage Limit Warning</b>\n\n` +
-                     `⚠️ Cloudflare KV daily write quota has been reached!\n\n` +
-                     `👤 User Info:\n` +
-                     `• Name: ${userDisplayName}\n` +
-                     `• Username: @${user.username || 'none'}\n` +
-                     `• Telegram ID: <code>${user_id}</code>\n` +
-                      (user.username ? '' : `• Direct contact: tg://user?id=${user_id}\n`)
-      
-      if (message_thread_id) {
-        alertText += `• Topic ID: ${message_thread_id}\n`
-        alertText += `• Status: Topic exists, messages cannot be forwarded\n\n`
-      } else {
-        alertText += `• Status: No topic created, cannot create a new topic\n\n`
-      }
-      
-      alertText += `📋 <b>Impact:</b>\n` +
-                  `• Cannot create new topics\n` +
-                  `• Cannot update user data\n` +
-                  `• Cannot forward user messages\n\n` +
-                  `🔧 <b>Recommendations:</b>\n` +
-                  `• Wait until UTC reset (usually 00:00 daily)\n` +
-                  `• Consider upgrading your Cloudflare plan\n` +
-                  `• Check for abnormal write operations\n\n` +
-                  `⏰ Time: ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai' })}\n\n` +
-                  `ℹ️ Note: Only one reminder per user per day`
-      
-      await sendMessage({
-        chat_id: ADMIN_UID,
-        text: alertText,
-        parse_mode: 'HTML'
-      })
-      
-      // Record the alert as sent
-      dailyKVAlertSent.add(alertKey)
-      console.log(`✅ KV limit alert sent to admin for user ${user_id}`)
-    } else {
-      console.log(`⏭️ KV limit alert already sent for user ${user_id} today, skipping admin notification`)
-    }
-    
-    // Always notify the user (regardless of whether the admin was notified)
-    await sendMessage({
-      chat_id: user_id,
-      text: `Sorry, due to storage limits, your message cannot be delivered temporarily.\n\n` +
-            `The recipient has been notified. Please try again tomorrow or wait until the issue is resolved.\n\n` +
-            `If it's urgent, please contact the recipient directly.`
-    })
-    
-    console.log(`✅ KV limit error handled for user ${user_id}, topic: ${message_thread_id || 'none'}`)
-    
-  } catch (alertError) {
-    console.error('❌ Failed to handle KV limit error:', alertError)
-  }
-}
-
-/**
  * Forward user messages to admin (u2a)
  */
 async function forwardMessageU2A(message) {
@@ -508,17 +597,22 @@ async function forwardMessageU2A(message) {
   const chat_id = message.chat.id
 
   try {
-    // 1. Check verification status (only when verification is enabled)
-    if (ENABLE_VERIFICATION) {
-      const verificationState = await db.getUserState(user_id, 'verification')
-      const isVerified = await db.getUserState(user_id, 'verified')
+    // 1. Admin bypasses all checks
+    if (user_id.toString() === ADMIN_UID) {
+      // Admin skips verification, blocking, rate limiting, etc.
+      // Continue to message forwarding
+    } else {
+      // 2. Check verification status (only when verification is enabled) - using Cache API
+      if (ENABLE_VERIFICATION) {
+      const verificationState = await verificationCache.getVerification(user_id, 'verification')
+      const isVerified = await verificationCache.getVerification(user_id, 'verified')
       
       // If user is not verified
       if (!isVerified) {
       // If verification challenge hasn't been sent yet, send it
       if (!verificationState) {
         const challenge = generateVerificationChallenge(user_id)
-        await db.setUserState(user_id, 'verification', {
+        await verificationCache.setVerification(user_id, 'verification', {
           challenge: challenge.challenge,
           answer: challenge.answer,
           totalAttempts: 0,
@@ -540,7 +634,7 @@ async function forwardMessageU2A(message) {
       
       if (timeElapsed > 60000) {
         // Verification code expired, delete verification data
-        await db.deleteUserState(user_id, 'verification')
+        await verificationCache.deleteVerification(user_id, 'verification')
         
         await sendMessage({
           chat_id: chat_id,
@@ -552,9 +646,12 @@ async function forwardMessageU2A(message) {
       // Check if maximum attempts reached
       const totalAttempts = verificationState.totalAttempts || 0
       if (totalAttempts >= VERIFICATION_MAX_ATTEMPTS) {
+        // Permanently block user
+        await db.blockUser(user_id, true)
+        
         await sendMessage({
           chat_id: chat_id,
-          text: `❌ Too many failed verification attempts (${VERIFICATION_MAX_ATTEMPTS} times), access denied.`
+          text: `❌ Too many failed verification attempts (${VERIFICATION_MAX_ATTEMPTS} times), permanently blocked.`
         })
         return
       }
@@ -573,8 +670,8 @@ async function forwardMessageU2A(message) {
       // Verify answer
       if (userAnswer === verificationState.answer) {
         // Verification successful
-        await db.setUserState(user_id, 'verified', true)
-        await db.deleteUserState(user_id, 'verification')
+        await verificationCache.setVerification(user_id, 'verified', true)
+        await verificationCache.deleteVerification(user_id, 'verification')
         
         await sendMessage({
           chat_id: chat_id,
@@ -587,21 +684,19 @@ async function forwardMessageU2A(message) {
         
         // Check if limit reached
         if (newTotalAttempts >= VERIFICATION_MAX_ATTEMPTS) {
-          await db.setUserState(user_id, 'verification', {
-            ...verificationState,
-            totalAttempts: newTotalAttempts
-          }, 120) // Auto-expire after 120 seconds
+          // Permanently block user
+          await db.blockUser(user_id, true)
           
           await sendMessage({
             chat_id: chat_id,
-            text: `❌ Maximum verification attempts reached (${VERIFICATION_MAX_ATTEMPTS} times), access denied.`
+            text: `❌ Maximum verification attempts reached (${VERIFICATION_MAX_ATTEMPTS} times), permanently blocked.`
           })
           return
         }
         
         // Generate new verification code
         const challenge = generateVerificationChallenge(user_id)
-        await db.setUserState(user_id, 'verification', {
+        await verificationCache.setVerification(user_id, 'verification', {
           challenge: challenge.challenge,
           answer: challenge.answer,
           totalAttempts: newTotalAttempts,
@@ -616,10 +711,10 @@ async function forwardMessageU2A(message) {
         return
       }
       }
-    }
+      }
 
-    // 2. Message rate limiting
-    if (MESSAGE_INTERVAL > 0) {
+      // 3. Message rate limiting
+      if (MESSAGE_INTERVAL > 0) {
       const lastMessageTime = await db.getLastMessageTime(user_id)
       const currentTime = Date.now()
       
@@ -633,26 +728,27 @@ async function forwardMessageU2A(message) {
           return
         }
       }
-      await db.setLastMessageTime(user_id, currentTime)
+        await db.setLastMessageTime(user_id, currentTime)
+      }
+
+      // 4. Check if blocked
+      const isBlocked = await db.isUserBlocked(user_id)
+      if (isBlocked) {
+        await sendMessage({
+          chat_id: chat_id,
+          text: 'You are blocked and cannot send messages.'
+        })
+        return
+      }
     }
 
-    // 3. Check if blocked
-    const isBlocked = await db.isUserBlocked(user_id)
-    if (isBlocked) {
-      await sendMessage({
-        chat_id: chat_id,
-        text: 'You are blocked and cannot send messages.'
-      })
-      return
-    }
-
-    // 4. Update user info
+    // 5. Update user info
     await updateUserDb(user)
 
-    // 5. Get or create topic
+    // 6. Get or create topic
     let user_data = await db.getUser(user_id)
     if (!user_data) {
-      // If user data does not exist (possibly KV latency), wait and retry once
+      // If user data does not exist (possibly latency), wait and retry once
       console.log(`User data not found for ${user_id}, retrying...`)
       await delay(100) // wait 100ms
       user_data = await db.getUser(user_id)
@@ -754,7 +850,7 @@ async function forwardMessageU2A(message) {
 
     console.log(`Final message_thread_id before forwarding: ${message_thread_id}`)
     
-    // 6. Handle message forwarding
+    // 7. Handle message forwarding
     console.log(`Starting message forwarding to topic ${message_thread_id}`)
     try {
       const params = { message_thread_id: message_thread_id }
@@ -885,15 +981,6 @@ async function forwardMessageU2A(message) {
   } catch (error) {
     console.error('❌ Error in forwardMessageU2A:', error)
     
-    // Check if it is a KV write limit error
-    if (isKVWriteLimitError(error)) {
-      const user_data = await db.getUser(user_id).catch(() => null)
-      const message_thread_id = user_data?.message_thread_id || null
-      
-      await handleKVLimitError(user, message_thread_id)
-      return
-    }
-    
     // Generic handling for other errors
     await sendMessage({
       chat_id: chat_id,
@@ -928,7 +1015,7 @@ async function forwardMessageA2U(message) {
     await sendMessage({
       chat_id: message.chat.id,
       message_thread_id: message_thread_id,
-      text: 'Reminder: This conversation is closed. The user’s messages may not be sent unless you reopen the conversation.',
+      text: 'Reminder: This conversation is closed. Messages from the user cannot be sent unless you reopen the conversation.',
       reply_to_message_id: message.message_id
     })
   }
@@ -1096,11 +1183,8 @@ async function handleClearCommand(message) {
       target_user.message_thread_id = null
       await db.setUser(target_user.user_id, target_user)
       
-      // Clean up message mapping records
-      const list = await horr.list({ prefix: 'msgmap:u2a:' })
-      for (const key of list.keys) {
-        await horr.delete(key.name)
-      }
+      // D1 version: Delete message mapping records
+      await db.deleteUserMessageMappings(target_user.user_id)
     }
     
     await db.setTopicStatus(message_thread_id, 'deleted')
@@ -1213,6 +1297,88 @@ async function handleBroadcastCommand(message) {
 }
 
 /**
+ * Handle delete message command
+ */
+async function handleDeleteCommand(message) {
+  const user = message.from
+  const message_thread_id = message.message_thread_id
+
+  if (user.id.toString() !== ADMIN_UID) {
+    return
+  }
+
+  if (!message_thread_id) {
+    await sendMessage({
+      chat_id: message.chat.id,
+      text: 'Please use this command in a topic.',
+      reply_to_message_id: message.message_id
+    })
+    return
+  }
+
+  if (!message.reply_to_message) {
+    await sendMessage({
+      chat_id: message.chat.id,
+      message_thread_id: message_thread_id,
+      text: 'Please reply to the message you want to delete.',
+      reply_to_message_id: message.message_id
+    })
+    return
+  }
+
+  const target_user = await findUserByThreadId(message_thread_id)
+  if (!target_user) {
+    await sendMessage({
+      chat_id: message.chat.id,
+      message_thread_id: message_thread_id,
+      text: 'Target user not found.',
+      reply_to_message_id: message.message_id
+    })
+    return
+  }
+
+  // Find corresponding user-side message ID
+  const admin_message_id = message.reply_to_message.message_id
+  const user_message_id = await db.getMessageMap(`a2u:${admin_message_id}`)
+
+  if (!user_message_id) {
+    await sendMessage({
+      chat_id: message.chat.id,
+      message_thread_id: message_thread_id,
+      text: 'No corresponding user message found. It may be a system message or already deleted.',
+      reply_to_message_id: message.message_id
+    })
+    return
+  }
+
+  try {
+    // Delete user-side message
+    await deleteMessage(target_user.user_id, user_message_id)
+    
+    // Delete the command message itself
+    await deleteMessage(message.chat.id, message.message_id)
+    
+    // Send success notification
+    await sendMessage({
+      chat_id: message.chat.id,
+      message_thread_id: message_thread_id,
+      text: '✅ User-side message deleted.',
+      reply_to_message_id: admin_message_id
+    })
+    
+    console.log(`Admin deleted message: admin_msg(${admin_message_id}) -> user_msg(${user_message_id})`)
+  } catch (error) {
+    console.error('Error deleting message:', error)
+    await sendMessage({
+      chat_id: message.chat.id,
+      message_thread_id: message_thread_id,
+      text: `❌ Failed to delete message: ${error.description || error.message}`,
+      reply_to_message_id: message.message_id
+    })
+  }
+}
+
+/**
  * Handle block command
  */
 async function handleBlockCommand(message) {
@@ -1273,31 +1439,72 @@ async function handleUnblockCommand(message) {
     return
   }
 
-  if (!message_thread_id) {
-    await sendMessage({
-      chat_id: message.chat.id,
-      text: 'Please use the unblock command in the relevant topic.',
-      reply_to_message_id: message.message_id
-    })
-    return
-  }
+  // Check if user ID parameter is provided (format: /unblock 123456)
+  const commandMatch = message.text?.match(/^\/unblock\s+(\d+)/)
+  if (commandMatch) {
+    const target_user_id = commandMatch[1]
+    
+    // Check if the user exists
+    const target_user = await db.getUser(target_user_id)
+    if (!target_user) {
+      await sendMessage({
+        chat_id: message.chat.id,
+        message_thread_id: message_thread_id,
+        text: `User not found with ID: ${target_user_id}`,
+        reply_to_message_id: message.message_id
+      })
+      return
+    }
 
-  const target_user = await findUserByThreadId(message_thread_id)
-  if (!target_user) {
+    // Check if blocked
+    const isBlocked = await db.isUserBlocked(target_user_id)
+    if (!isBlocked) {
+      await sendMessage({
+        chat_id: message.chat.id,
+        message_thread_id: message_thread_id,
+        text: `User ${target_user_id} is not blocked.`,
+        reply_to_message_id: message.message_id
+      })
+      return
+    }
+
+    await db.blockUser(target_user_id, false)
     await sendMessage({
       chat_id: message.chat.id,
       message_thread_id: message_thread_id,
-      text: 'Could not find the user to unblock.',
+      text: `✅ User ${target_user_id} (${target_user.first_name || 'Unknown'}) has been unblocked.`,
       reply_to_message_id: message.message_id
     })
     return
   }
 
-  await db.blockUser(target_user.user_id, false)
+  // If in a topic and no user ID provided, unblock that topic's user
+  if (message_thread_id) {
+    const target_user = await findUserByThreadId(message_thread_id)
+    if (!target_user) {
+      await sendMessage({
+        chat_id: message.chat.id,
+        message_thread_id: message_thread_id,
+        text: 'Could not find the user to unblock.',
+        reply_to_message_id: message.message_id
+      })
+      return
+    }
+
+    await db.blockUser(target_user.user_id, false)
+    await sendMessage({
+      chat_id: message.chat.id,
+      message_thread_id: message_thread_id,
+      text: `✅ User ${target_user.user_id} has been unblocked.`,
+      reply_to_message_id: message.message_id
+    })
+    return
+  }
+
+  // Neither in a topic nor user ID provided
   await sendMessage({
     chat_id: message.chat.id,
-    message_thread_id: message_thread_id,
-    text: `User ${target_user.user_id} has been unblocked.`,
+    text: 'Please use this command in a topic, or use format: /unblock [user_id]',
     reply_to_message_id: message.message_id
   })
 }
@@ -1361,7 +1568,7 @@ async function handleCheckBlockCommand(message) {
     
     for (const u of blockedUsers) {
       const userName = u.first_name || 'Unknown'
-      const userInfo = u.username ? `@${u.username}` : `ID: ${u.user_id}`
+      const userInfo = u.username ? `@${u.username} | ID: ${u.user_id}` : `ID: ${u.user_id}`
       responseText += `• ${userName} (${userInfo})\n`
     }
 
@@ -1396,8 +1603,8 @@ async function onUpdate(update) {
         return await handleStart(message)
       }
 
-      // Handle commands from admin
-      if (user.id.toString() === ADMIN_UID && chat_id.toString() === ADMIN_GROUP_ID) {
+      // Handle commands from admin (support both admin group and private chat)
+      if (user.id.toString() === ADMIN_UID && (chat_id.toString() === ADMIN_GROUP_ID || message.chat.type === 'private')) {
         if (message.text === '/clear') {
           return await handleClearCommand(message)
         }
@@ -1412,6 +1619,18 @@ async function onUpdate(update) {
         }
         if (message.text === '/checkblock') {
           return await handleCheckBlockCommand(message)
+        }
+        if (message.text === '/del') {
+          return await handleDeleteCommand(message)
+        }
+        // If other commands are used in private chat, show a hint
+        if (message.chat.type === 'private' && ['/clear', '/del'].includes(message.text)) {
+          await sendMessage({
+            chat_id: chat_id,
+            text: 'This command must be used in a topic within the admin group.',
+            reply_to_message_id: message.message_id
+          })
+          return
         }
       }
 
@@ -1477,6 +1696,7 @@ async function registerWebhook(event, requestUrl, suffix, secret) {
   console.log('Webhook URL:', webhookUrl)
   console.log('API URL:', apiUrl('setWebhook'))
   
+  // Register webhook
   const r = await fetch(apiUrl('setWebhook'), {
     method: 'POST',
     headers: {
@@ -1491,6 +1711,28 @@ async function registerWebhook(event, requestUrl, suffix, secret) {
 
   const result = await r.json()
   console.log('📡 Telegram API response:', result)
+  
+  // Register bot commands (only /start is visible, other commands are hidden)
+  try {
+    const commandsResult = await fetch(apiUrl('setMyCommands'), {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        commands: [
+          {
+            command: 'start',
+            description: 'Start the bot'
+          }
+        ]
+      }),
+    })
+    const commandsData = await commandsResult.json()
+    console.log('📋 Commands registration response:', commandsData)
+  } catch (error) {
+    console.error('❌ Commands registration failed:', error)
+  }
   
   return new Response(JSON.stringify(result, null, 2), {
     headers: { 'content-type': 'application/json' }
@@ -1515,18 +1757,99 @@ async function unRegisterWebhook(event) {
 }
 
 /**
- * Main event listener
+ * Initialize database tables
  */
-addEventListener('fetch', event => {
-  const url = new URL(event.request.url)
+async function initDatabase(d1) {
+  const statements = [
+    // Create tables
+    `CREATE TABLE IF NOT EXISTS users (
+      user_id TEXT PRIMARY KEY,
+      first_name TEXT,
+      last_name TEXT,
+      username TEXT,
+      message_thread_id INTEGER,
+      created_at INTEGER,
+      updated_at INTEGER
+    )`,
+    `CREATE TABLE IF NOT EXISTS message_mappings (
+      mapping_key TEXT PRIMARY KEY,
+      mapped_value INTEGER,
+      created_at INTEGER
+    )`,
+    `CREATE TABLE IF NOT EXISTS topic_status (
+      thread_id INTEGER PRIMARY KEY,
+      status TEXT DEFAULT 'opened',
+      updated_at INTEGER
+    )`,
+    `CREATE TABLE IF NOT EXISTS user_states (
+      user_id TEXT NOT NULL,
+      state_key TEXT NOT NULL,
+      state_value TEXT,
+      expiry_time INTEGER,
+      PRIMARY KEY (user_id, state_key)
+    )`,
+    `CREATE TABLE IF NOT EXISTS blocked_users (
+      user_id TEXT PRIMARY KEY,
+      blocked INTEGER DEFAULT 1,
+      blocked_at INTEGER
+    )`,
+    `CREATE TABLE IF NOT EXISTS message_rates (
+      user_id TEXT PRIMARY KEY,
+      last_message_time INTEGER
+    )`,
+    // Create indexes
+    'CREATE INDEX IF NOT EXISTS idx_users_thread ON users(message_thread_id)',
+    'CREATE INDEX IF NOT EXISTS idx_mappings_key ON message_mappings(mapping_key)',
+    'CREATE INDEX IF NOT EXISTS idx_states_expiry ON user_states(expiry_time)'
+  ]
   
-  if (url.pathname === WEBHOOK) {
-    event.respondWith(handleWebhook(event))
-  } else if (url.pathname === '/registerWebhook') {
-    event.respondWith(registerWebhook(event, url, WEBHOOK, SECRET))
-  } else if (url.pathname === '/unRegisterWebhook') {
-    event.respondWith(unRegisterWebhook(event))
-  } else {
-    event.respondWith(new Response('No handler for this request'))
+  try {
+    // Use batch to execute all statements
+    const preparedStatements = statements.map(sql => d1.prepare(sql))
+    await d1.batch(preparedStatements)
+    console.log('✅ Database tables initialized successfully')
+  } catch (error) {
+    console.error('❌ Database initialization error:', error)
+    throw error
   }
-})
+}
+
+/**
+ * Main event listener (using ES Module format)
+ */
+export default {
+  async fetch(request, env, ctx) {
+    // Initialize configuration variables
+    initConfig(env)
+    
+    // Initialize database connection
+    if (!db && env.D1) {
+      db = new Database(env.D1)
+    }
+    
+    const url = new URL(request.url)
+    
+    if (url.pathname === WEBHOOK) {
+      return await handleWebhook({ request, waitUntil: ctx.waitUntil.bind(ctx) })
+    } else if (url.pathname === '/registerWebhook') {
+      return await registerWebhook({ request }, url, WEBHOOK, SECRET)
+    } else if (url.pathname === '/unRegisterWebhook') {
+      return await unRegisterWebhook({ request })
+    } else if (url.pathname === '/initDatabase') {
+      try {
+        await initDatabase(env.D1)
+        return new Response('✅ Database initialized successfully', { 
+          status: 200,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+        })
+      } catch (error) {
+        return new Response(`❌ Database initialization failed: ${error.message}`, { 
+          status: 500,
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+        })
+      }
+    } else {
+      return new Response('No handler for this request')
+    }
+  }
+}
