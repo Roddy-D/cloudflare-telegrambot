@@ -1,4 +1,4 @@
-// === Configuration variables (obtained from env) ===
+// === Configuration variables (obtained from env) === 
 let TOKEN = null
 let WEBHOOK = '/endpoint'
 let SECRET = null

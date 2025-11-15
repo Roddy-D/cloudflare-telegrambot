@@ -1,4 +1,4 @@
-// === 配置变量（从 env 中获取）===
+// === 配置变量（从 env 中获取）=== 
 let TOKEN = null
 let WEBHOOK = '/endpoint'
 let SECRET = null
