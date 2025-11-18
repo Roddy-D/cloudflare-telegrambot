@@ -149,7 +149,7 @@ This project is a Telegram message forwarding bot based on Cloudflare Worker and
    - `/clear`: Clear current topic (delete topic & related data, without blocking user)  
    - `/block`: Block user (use directly within the corresponding topic)  
    - `/unblock`: Unblock user (use directly within the corresponding topic, or add the user ID after the command. You can check user IDs with `/checkblock`.)  
-   - `/checkblock`: Check user block status (use directly within the corresponding topic), or show a list of all blocked users (when used in the general topic)
+   - `/checkblock`: Check user block status (use directly within the corresponding topic), or show a list of all blocked users (when used in the general topic, users blocked for exceeding the maximum number of incorrect verification code attempts included)
    - `/broadcast`: Broadcast a message (reply to the message to send; it won't appear in topic, sent directly to users)  
    - `/del`: Delete messages between the user and the bot (reply to the message you want to delete), only effective for messages within 48 hours, beyond 48 hours even if it prompts success it won't actually work
 
