@@ -535,13 +535,14 @@ async function handleStart(message) {
         await verificationCache.setVerification(user_id, 'verification', {
           challenge: challenge.challenge,
           answer: challenge.answer,
+          offset: challenge.offset,
           totalAttempts: 0,
           timestamp: Date.now()
         }, 120) // Auto-expire after 120 seconds
         
         await sendMessage({
           chat_id: chat_id,
-          text: `${mentionHtml(user_id, user.first_name || user_id)}, Welcome!\n\n🔐 Please enter the verification code\n\nThe code is each digit of the 4-digit number ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
+          text: `${mentionHtml(user_id, user.first_name || user_id)}, Welcome!\n\n🔐 Please enter the verification code\n\nAdd ${challenge.offset} to each digit of current UTC+8 time in HH:MM format (4 digits), if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
           parse_mode: 'HTML'
         })
         return
@@ -558,14 +559,23 @@ async function handleStart(message) {
 }
 
 /**
- * Generate verification challenge and answer (completely random)
+ * Get UTC+8 time digits in HHMM format
+ */
+function getUTC8TimeDigits(offsetMinutes = 0) {
+  const now = new Date()
+  // Convert to UTC+8 (add 8 hours)
+  const utc8Time = new Date(now.getTime() + (8 * 60 * 60 * 1000) + (offsetMinutes * 60 * 1000))
+  const hours = utc8Time.getUTCHours().toString().padStart(2, '0')
+  const minutes = utc8Time.getUTCMinutes().toString().padStart(2, '0')
+  return hours + minutes
+}
+
+/**
+ * Generate verification challenge and answer (based on UTC+8 time)
  */
 function generateVerificationChallenge(user_id) {
-  // Randomly generate 4 digits
-  let challengeDigits = ''
-  for (let i = 0; i < 4; i++) {
-    challengeDigits += Math.floor(Math.random() * 10).toString()
-  }
+  // Get UTC+8 time HHMM as 4 digits
+  const challengeDigits = getUTC8TimeDigits(0)
   
   // Randomly generate offset (1-9, avoid 0 as it has no effect)
   const offset = Math.floor(Math.random() * 9) + 1
@@ -583,6 +593,28 @@ function generateVerificationChallenge(user_id) {
     answer: answer,
     offset: offset
   }
+}
+
+/**
+ * Verify answer (allow ±1 minute time deviation)
+ */
+function verifyAnswer(userAnswer, offset) {
+  // Check three possible answers: current time, -1 minute, +1 minute
+  for (let timeOffset = -1; timeOffset <= 1; timeOffset++) {
+    const challengeDigits = getUTC8TimeDigits(timeOffset)
+    let correctAnswer = ''
+    for (let i = 0; i < challengeDigits.length; i++) {
+      const digit = parseInt(challengeDigits[i])
+      const newDigit = (digit + offset) % 10
+      correctAnswer += newDigit.toString()
+    }
+    
+    if (userAnswer === correctAnswer) {
+      return true
+    }
+  }
+  
+  return false
 }
 
 /**
@@ -612,13 +644,14 @@ async function forwardMessageU2A(message) {
         await verificationCache.setVerification(user_id, 'verification', {
           challenge: challenge.challenge,
           answer: challenge.answer,
+          offset: challenge.offset,
           totalAttempts: 0,
           timestamp: Date.now()
         }, 120) // Auto-expire after 120 seconds
         
         await sendMessage({
           chat_id: chat_id,
-          text: `🔐 Please enter the verification code\n\nThe code is each digit of the 4-digit number ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
+          text: `🔐 Please enter the verification code\n\nAdd ${challenge.offset} to each digit of current UTC+8 time in HH:MM format (4 digits), if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
           parse_mode: 'HTML'
         })
         return
@@ -666,8 +699,8 @@ async function forwardMessageU2A(message) {
         return
       }
       
-      // Verify answer
-      if (userAnswer === verificationState.answer) {
+      // Verify answer (allow ±1 minute deviation)
+      if (verifyAnswer(userAnswer, verificationState.offset)) {
         // Verification successful
         await verificationCache.setVerification(user_id, 'verified', true)
         await verificationCache.deleteVerification(user_id, 'verification')
@@ -700,13 +733,14 @@ async function forwardMessageU2A(message) {
         await verificationCache.setVerification(user_id, 'verification', {
           challenge: challenge.challenge,
           answer: challenge.answer,
+          offset: challenge.offset,
           totalAttempts: newTotalAttempts,
           timestamp: Date.now()
         }, 120) // Auto-expire after 120 seconds
         
         await sendMessage({
           chat_id: chat_id,
-          text: `❌ Verification failed (${newTotalAttempts}/${VERIFICATION_MAX_ATTEMPTS})\n\n🔐 Please re-enter the verification code\n\nThe code is each digit of the 4-digit number ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
+          text: `❌ Verification failed (${newTotalAttempts}/${VERIFICATION_MAX_ATTEMPTS})\n\n🔐 Please re-enter the verification code\n\nAdd ${challenge.offset} to each digit of current UTC+8 time in HH:MM format (4 digits), if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
           parse_mode: 'HTML'
         })
         return
