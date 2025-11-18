@@ -6,7 +6,6 @@ let ADMIN_UID = null
 let ADMIN_GROUP_ID = null
 let WELCOME_MESSAGE = '欢迎使用机器人'
 let MESSAGE_INTERVAL = 1
-let DELETE_TOPIC_AS_BAN = false
 let ENABLE_VERIFICATION = false
 let VERIFICATION_MAX_ATTEMPTS = 10
 
@@ -18,7 +17,6 @@ function initConfig(env) {
   ADMIN_GROUP_ID = env.ENV_ADMIN_GROUP_ID
   WELCOME_MESSAGE = env.ENV_WELCOME_MESSAGE || '欢迎使用机器人'
   MESSAGE_INTERVAL = env.ENV_MESSAGE_INTERVAL ? parseInt(env.ENV_MESSAGE_INTERVAL) || 1 : 1
-  DELETE_TOPIC_AS_BAN = (env.ENV_DELETE_TOPIC_AS_BAN || '').toLowerCase() === 'true'
   ENABLE_VERIFICATION = (env.ENV_ENABLE_VERIFICATION || '').toLowerCase() === 'true'
   VERIFICATION_MAX_ATTEMPTS = env.ENV_VERIFICATION_MAX_ATTEMPTS ? parseInt(env.ENV_VERIFICATION_MAX_ATTEMPTS) || 10 : 10
 }
@@ -517,7 +515,6 @@ async function handleStart(message) {
 • 验证功能：${ENABLE_VERIFICATION ? '已启用' : '已禁用'}
 • 最大验证次数：${VERIFICATION_MAX_ATTEMPTS}次
 • 消息间隔：${MESSAGE_INTERVAL}秒
-• 删除话题视为永久封禁：${DELETE_TOPIC_AS_BAN ? '是' : '否'}
 
 ✅ 机器人已激活并正常运行。`
     
@@ -648,6 +645,8 @@ async function forwardMessageU2A(message) {
       if (totalAttempts >= VERIFICATION_MAX_ATTEMPTS) {
         // 永久屏蔽用户
         await db.blockUser(user_id, true)
+        // 标记为验证码超出限制而被屏蔽
+        await db.setUserState(user_id, 'verification_blocked', true)
         
         await sendMessage({
           chat_id: chat_id,
@@ -686,6 +685,8 @@ async function forwardMessageU2A(message) {
         if (newTotalAttempts >= VERIFICATION_MAX_ATTEMPTS) {
           // 永久屏蔽用户
           await db.blockUser(user_id, true)
+          // 标记为验证码超出限制而被屏蔽
+          await db.setUserState(user_id, 'verification_blocked', true)
           
           await sendMessage({
             chat_id: chat_id,
@@ -783,7 +784,7 @@ async function forwardMessageU2A(message) {
         })
         return
       } else if (topicStatus.status === 'deleted' || topicStatus.status === 'removed') {
-        // 话题已被删除，需要重新创建
+        // 话题已被删除，允许重新创建
         const oldThreadId = message_thread_id
         message_thread_id = null
         user_data.message_thread_id = null
@@ -959,17 +960,10 @@ async function forwardMessageU2A(message) {
         
         console.log(`Topic ${oldThreadId} seems deleted. Cleared thread_id for user ${user_id}`)
         
-        if (!DELETE_TOPIC_AS_BAN) {
-          await sendMessage({
-            chat_id: chat_id,
-            text: '发送失败：你之前的对话已被删除。请重新发送一次当前消息。\nSend failed: Your previous conversation has been deleted. Please resend the current message.'
-          })
-        } else {
-          await sendMessage({
-            chat_id: chat_id,
-            text: '发送失败：你的对话已被永久删除。消息无法送达。\nSend failed: Your conversation has been permanently deleted. Message cannot be delivered.'
-          })
-        }
+        await sendMessage({
+          chat_id: chat_id,
+          text: '发送失败：你之前的对话已被删除。请重新发送一次当前消息。\nSend failed: Your previous conversation has been deleted. Please resend the current message.'
+        })
       } else {
         await sendMessage({
           chat_id: chat_id,
@@ -1469,6 +1463,8 @@ async function handleUnblockCommand(message) {
     }
 
     await db.blockUser(target_user_id, false)
+    // 清除验证码屏蔽标记（如果存在）
+    await db.deleteUserState(target_user_id, 'verification_blocked')
     await sendMessage({
       chat_id: message.chat.id,
       message_thread_id: message_thread_id,
@@ -1492,6 +1488,8 @@ async function handleUnblockCommand(message) {
     }
 
     await db.blockUser(target_user.user_id, false)
+    // 清除验证码屏蔽标记（如果存在）
+    await db.deleteUserState(target_user.user_id, 'verification_blocked')
     await sendMessage({
       chat_id: message.chat.id,
       message_thread_id: message_thread_id,
@@ -1534,10 +1532,15 @@ async function handleCheckBlockCommand(message) {
     }
 
     const isBlocked = await db.isUserBlocked(target_user.user_id)
+    const verificationBlockedState = await db.getUserState(target_user.user_id, 'verification_blocked')
+    const isVerificationBlocked = isBlocked && verificationBlockedState === true
+    const statusText = isBlocked 
+      ? `已屏蔽${isVerificationBlocked ? ' (验证码超出限制)' : ''}`
+      : '未屏蔽'
     await sendMessage({
       chat_id: message.chat.id,
       message_thread_id: message_thread_id,
-      text: `用户 ${target_user.user_id} 屏蔽状态: ${isBlocked ? '已屏蔽' : '未屏蔽'}`,
+      text: `用户 ${target_user.user_id} 屏蔽状态: ${statusText}`,
       reply_to_message_id: message.message_id
     })
     return
@@ -1564,20 +1567,81 @@ async function handleCheckBlockCommand(message) {
       return
     }
 
-    let responseText = `🚫 <b>被屏蔽用户列表</b> (共 ${blockedUsers.length} 人)\n\n`
+    const MAX_MESSAGE_LENGTH = 3900 // 留更多余量
     
-    for (const u of blockedUsers) {
+    let messages = []
+    let currentMessage = `🚫 <b>被屏蔽用户列表</b> (共 ${blockedUsers.length} 人)\n\n`
+    let partNumber = 1
+    
+    // 批量获取验证状态
+    const verificationStates = await Promise.all(
+      blockedUsers.map(u => 
+        db.getUserState(u.user_id, 'verification_blocked')
+          .catch(err => {
+            console.error(`获取用户 ${u.user_id} 状态失败:`, err)
+            return null
+          })
+      )
+    )
+    
+    for (let i = 0; i < blockedUsers.length; i++) {
+      const u = blockedUsers[i]
       const userName = u.first_name || '未知'
       const userInfo = u.username ? `@${u.username} | ID: ${u.user_id}` : `ID: ${u.user_id}`
-      responseText += `• ${userName} (${userInfo})\n`
+      const verificationBlockedState = verificationStates[i]
+      const mark = verificationBlockedState === true ? ' [验证码超出限制]' : ''
+      let userLine = `• ${userName} (${userInfo})${mark}\n`
+      
+      // 处理过长的单行
+      if (userLine.length > MAX_MESSAGE_LENGTH - 100) {
+        const maxNameLength = 50
+        const truncatedName = userName.length > maxNameLength 
+          ? userName.substring(0, maxNameLength) + '...' 
+          : userName
+        userLine = `• ${truncatedName} (${userInfo})${mark}\n`
+      }
+      
+      // 检查是否需要分段
+      if (currentMessage.length + userLine.length > MAX_MESSAGE_LENGTH) {
+        // 确保至少有内容
+        if (currentMessage.split('\n').length > 3) {
+          messages.push(currentMessage.trim())
+          partNumber++
+          currentMessage = `🚫 <b>被屏蔽用户列表</b> (第 ${partNumber} 部分)\n\n`
+        }
+      }
+      
+      currentMessage += userLine
     }
-
-    await sendMessage({
-      chat_id: message.chat.id,
-      text: responseText,
-      parse_mode: 'HTML',
-      reply_to_message_id: message.message_id
-    })
+    
+    // 添加最后一段
+    if (currentMessage.trim() && currentMessage.split('\n').length > 2) {
+      messages.push(currentMessage.trim())
+    }
+    
+    // 如果没有用户
+    if (messages.length === 0) {
+      messages.push('🚫 <b>被屏蔽用户列表</b>\n\n暂无被屏蔽的用户。')
+    }
+    
+    // 分段发送，添加延迟避免限流
+    for (let i = 0; i < messages.length; i++) {
+      try {
+        await sendMessage({
+          chat_id: message.chat.id,
+          text: messages[i],
+          parse_mode: 'HTML',
+          reply_to_message_id: i === 0 ? message.message_id : undefined
+        })
+        
+        // 避免发送太快
+        if (i < messages.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+      } catch (err) {
+        console.error(`发送第 ${i + 1} 段消息失败:`, err)
+      }
+    }
   } catch (error) {
     console.error('Error checking blocked users:', error)
     await sendMessage({

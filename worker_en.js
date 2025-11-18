@@ -6,7 +6,6 @@ let ADMIN_UID = null
 let ADMIN_GROUP_ID = null
 let WELCOME_MESSAGE = 'Welcome to the bot'
 let MESSAGE_INTERVAL = 1
-let DELETE_TOPIC_AS_BAN = false
 let ENABLE_VERIFICATION = false
 let VERIFICATION_MAX_ATTEMPTS = 10
 
@@ -18,7 +17,6 @@ function initConfig(env) {
   ADMIN_GROUP_ID = env.ENV_ADMIN_GROUP_ID
   WELCOME_MESSAGE = env.ENV_WELCOME_MESSAGE || 'Welcome to the bot'
   MESSAGE_INTERVAL = env.ENV_MESSAGE_INTERVAL ? parseInt(env.ENV_MESSAGE_INTERVAL) || 1 : 1
-  DELETE_TOPIC_AS_BAN = (env.ENV_DELETE_TOPIC_AS_BAN || '').toLowerCase() === 'true'
   ENABLE_VERIFICATION = (env.ENV_ENABLE_VERIFICATION || '').toLowerCase() === 'true'
   VERIFICATION_MAX_ATTEMPTS = env.ENV_VERIFICATION_MAX_ATTEMPTS ? parseInt(env.ENV_VERIFICATION_MAX_ATTEMPTS) || 10 : 10
 }
@@ -517,7 +515,6 @@ async function handleStart(message) {
 • Verification: ${ENABLE_VERIFICATION ? 'Enabled' : 'Disabled'}
 • Max verification attempts: ${VERIFICATION_MAX_ATTEMPTS} times
 • Message interval: ${MESSAGE_INTERVAL}s
-• Delete topic as ban: ${DELETE_TOPIC_AS_BAN ? 'Yes' : 'No'}
 
 ✅ Bot is activated and running normally.`
     
@@ -648,6 +645,8 @@ async function forwardMessageU2A(message) {
       if (totalAttempts >= VERIFICATION_MAX_ATTEMPTS) {
         // Permanently block user
         await db.blockUser(user_id, true)
+        // Mark as blocked due to verification limit exceeded
+        await db.setUserState(user_id, 'verification_blocked', true)
         
         await sendMessage({
           chat_id: chat_id,
@@ -686,6 +685,8 @@ async function forwardMessageU2A(message) {
         if (newTotalAttempts >= VERIFICATION_MAX_ATTEMPTS) {
           // Permanently block user
           await db.blockUser(user_id, true)
+          // Mark as blocked due to verification limit exceeded
+          await db.setUserState(user_id, 'verification_blocked', true)
           
           await sendMessage({
             chat_id: chat_id,
@@ -783,7 +784,7 @@ async function forwardMessageU2A(message) {
         })
         return
       } else if (topicStatus.status === 'deleted' || topicStatus.status === 'removed') {
-        // Topic was deleted; need to recreate
+        // Topic was deleted; allow recreation
         const oldThreadId = message_thread_id
         message_thread_id = null
         user_data.message_thread_id = null
@@ -959,17 +960,10 @@ async function forwardMessageU2A(message) {
         
         console.log(`Topic ${oldThreadId} seems deleted. Cleared thread_id for user ${user_id}`)
         
-        if (!DELETE_TOPIC_AS_BAN) {
-          await sendMessage({
-            chat_id: chat_id,
-            text: 'Send failed: your previous conversation was deleted. Please resend the current message.'
-          })
-        } else {
-          await sendMessage({
-            chat_id: chat_id,
-            text: 'Send failed: your conversation was permanently deleted. Messages cannot be delivered.'
-          })
-        }
+        await sendMessage({
+          chat_id: chat_id,
+          text: 'Send failed: your previous conversation was deleted. Please resend the current message.'
+        })
       } else {
         await sendMessage({
           chat_id: chat_id,
@@ -1469,6 +1463,8 @@ async function handleUnblockCommand(message) {
     }
 
     await db.blockUser(target_user_id, false)
+    // Clear verification block mark (if exists)
+    await db.deleteUserState(target_user_id, 'verification_blocked')
     await sendMessage({
       chat_id: message.chat.id,
       message_thread_id: message_thread_id,
@@ -1492,6 +1488,8 @@ async function handleUnblockCommand(message) {
     }
 
     await db.blockUser(target_user.user_id, false)
+    // Clear verification block mark (if exists)
+    await db.deleteUserState(target_user.user_id, 'verification_blocked')
     await sendMessage({
       chat_id: message.chat.id,
       message_thread_id: message_thread_id,
@@ -1534,10 +1532,15 @@ async function handleCheckBlockCommand(message) {
     }
 
     const isBlocked = await db.isUserBlocked(target_user.user_id)
+    const verificationBlockedState = await db.getUserState(target_user.user_id, 'verification_blocked')
+    const isVerificationBlocked = isBlocked && verificationBlockedState === true
+    const statusText = isBlocked 
+      ? `Blocked${isVerificationBlocked ? ' (Verification limit exceeded)' : ''}`
+      : 'Not blocked'
     await sendMessage({
       chat_id: message.chat.id,
       message_thread_id: message_thread_id,
-      text: `User ${target_user.user_id} block status: ${isBlocked ? 'Blocked' : 'Not blocked'}`,
+      text: `User ${target_user.user_id} block status: ${statusText}`,
       reply_to_message_id: message.message_id
     })
     return
@@ -1564,20 +1567,81 @@ async function handleCheckBlockCommand(message) {
       return
     }
 
-    let responseText = `🚫 <b>Blocked Users List</b> (Total: ${blockedUsers.length})\n\n`
+    const MAX_MESSAGE_LENGTH = 3900 // Leave more margin
     
-    for (const u of blockedUsers) {
+    let messages = []
+    let currentMessage = `🚫 <b>Blocked Users List</b> (Total: ${blockedUsers.length})\n\n`
+    let partNumber = 1
+    
+    // Batch fetch verification states
+    const verificationStates = await Promise.all(
+      blockedUsers.map(u => 
+        db.getUserState(u.user_id, 'verification_blocked')
+          .catch(err => {
+            console.error(`Failed to get state for user ${u.user_id}:`, err)
+            return null
+          })
+      )
+    )
+    
+    for (let i = 0; i < blockedUsers.length; i++) {
+      const u = blockedUsers[i]
       const userName = u.first_name || 'Unknown'
       const userInfo = u.username ? `@${u.username} | ID: ${u.user_id}` : `ID: ${u.user_id}`
-      responseText += `• ${userName} (${userInfo})\n`
+      const verificationBlockedState = verificationStates[i]
+      const mark = verificationBlockedState === true ? ' [Verification limit exceeded]' : ''
+      let userLine = `• ${userName} (${userInfo})${mark}\n`
+      
+      // Handle overly long single lines
+      if (userLine.length > MAX_MESSAGE_LENGTH - 100) {
+        const maxNameLength = 50
+        const truncatedName = userName.length > maxNameLength 
+          ? userName.substring(0, maxNameLength) + '...' 
+          : userName
+        userLine = `• ${truncatedName} (${userInfo})${mark}\n`
+      }
+      
+      // Check if segmentation is needed
+      if (currentMessage.length + userLine.length > MAX_MESSAGE_LENGTH) {
+        // Ensure there's at least some content
+        if (currentMessage.split('\n').length > 3) {
+          messages.push(currentMessage.trim())
+          partNumber++
+          currentMessage = `🚫 <b>Blocked Users List</b> (Part ${partNumber})\n\n`
+        }
+      }
+      
+      currentMessage += userLine
     }
-
-    await sendMessage({
-      chat_id: message.chat.id,
-      text: responseText,
-      parse_mode: 'HTML',
-      reply_to_message_id: message.message_id
-    })
+    
+    // Add the last part
+    if (currentMessage.trim() && currentMessage.split('\n').length > 2) {
+      messages.push(currentMessage.trim())
+    }
+    
+    // If no users
+    if (messages.length === 0) {
+      messages.push('🚫 <b>Blocked Users List</b>\n\nNo blocked users.')
+    }
+    
+    // Send in parts with delay to avoid rate limiting
+    for (let i = 0; i < messages.length; i++) {
+      try {
+        await sendMessage({
+          chat_id: message.chat.id,
+          text: messages[i],
+          parse_mode: 'HTML',
+          reply_to_message_id: i === 0 ? message.message_id : undefined
+        })
+        
+        // Avoid sending too fast
+        if (i < messages.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+      } catch (err) {
+        console.error(`Failed to send part ${i + 1}:`, err)
+      }
+    }
   } catch (error) {
     console.error('Error checking blocked users:', error)
     await sendMessage({
