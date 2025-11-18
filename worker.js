@@ -535,13 +535,14 @@ async function handleStart(message) {
         await verificationCache.setVerification(user_id, 'verification', {
           challenge: challenge.challenge,
           answer: challenge.answer,
+          offset: challenge.offset,
           totalAttempts: 0,
           timestamp: Date.now()
         }, 120) // 120秒后自动过期
         
         await sendMessage({
           chat_id: chat_id,
-          text: `${mentionHtml(user_id, user.first_name || user_id)}，欢迎使用！\n\n🔐 请输入验证码\n\n验证码是以下四位数 ${challenge.challenge} 的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n⏰ 请在1分钟内回复验证码，否则将失效\n\n${mentionHtml(user_id, user.first_name || user_id)}, Welcome!\n\n🔐 Please enter the verification code\n\nThe code is a 4-digit number. The answer is each digit of ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
+          text: `${mentionHtml(user_id, user.first_name || user_id)}，欢迎使用！\n\n🔐 请输入验证码\n\n将当前UTC+8时间的 时:分（HHMM格式）四位数字的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n⏰ 请在1分钟内回复验证码，否则将失效\n\n${mentionHtml(user_id, user.first_name || user_id)}, Welcome!\n\n🔐 Please enter the verification code\n\nAdd ${challenge.offset} to each digit of current UTC+8 time in HH:MM format (4 digits), if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
           parse_mode: 'HTML'
         })
         return
@@ -558,14 +559,23 @@ async function handleStart(message) {
 }
 
 /**
- * 生成验证码挑战和答案（完全随机）
+ * 获取UTC+8时间的HHMM四位数
+ */
+function getUTC8TimeDigits(offsetMinutes = 0) {
+  const now = new Date()
+  // 转换为UTC+8（加8小时）
+  const utc8Time = new Date(now.getTime() + (8 * 60 * 60 * 1000) + (offsetMinutes * 60 * 1000))
+  const hours = utc8Time.getUTCHours().toString().padStart(2, '0')
+  const minutes = utc8Time.getUTCMinutes().toString().padStart(2, '0')
+  return hours + minutes
+}
+
+/**
+ * 生成验证码挑战和答案（基于UTC+8时间）
  */
 function generateVerificationChallenge(user_id) {
-  // 随机生成四位数字
-  let challengeDigits = ''
-  for (let i = 0; i < 4; i++) {
-    challengeDigits += Math.floor(Math.random() * 10).toString()
-  }
+  // 获取UTC+8时间的HHMM作为四位数字
+  const challengeDigits = getUTC8TimeDigits(0)
   
   // 随机生成加数（1-9，避免0没有意义）
   const offset = Math.floor(Math.random() * 9) + 1
@@ -583,6 +593,28 @@ function generateVerificationChallenge(user_id) {
     answer: answer,
     offset: offset
   }
+}
+
+/**
+ * 验证答案（允许±1分钟的时间偏差）
+ */
+function verifyAnswer(userAnswer, offset) {
+  // 检查当前时间、前1分钟、后1分钟的三种可能答案
+  for (let timeOffset = -1; timeOffset <= 1; timeOffset++) {
+    const challengeDigits = getUTC8TimeDigits(timeOffset)
+    let correctAnswer = ''
+    for (let i = 0; i < challengeDigits.length; i++) {
+      const digit = parseInt(challengeDigits[i])
+      const newDigit = (digit + offset) % 10
+      correctAnswer += newDigit.toString()
+    }
+    
+    if (userAnswer === correctAnswer) {
+      return true
+    }
+  }
+  
+  return false
 }
 
 /**
@@ -612,13 +644,14 @@ async function forwardMessageU2A(message) {
         await verificationCache.setVerification(user_id, 'verification', {
           challenge: challenge.challenge,
           answer: challenge.answer,
+          offset: challenge.offset,
           totalAttempts: 0,
           timestamp: Date.now()
         }, 120) // 120秒后自动过期
         
         await sendMessage({
           chat_id: chat_id,
-          text: `🔐 请输入验证码\n\n验证码是以下四位数 ${challenge.challenge} 的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n⏰ 请在1分钟内回复验证码，否则将失效\n\n🔐 Please enter the verification code\n\nThe code is a 4-digit number. The answer is each digit of ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
+          text: `🔐 请输入验证码\n\n将当前UTC+8时间的 时:分（HHMM格式）四位数字的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n⏰ 请在1分钟内回复验证码，否则将失效\n\n🔐 Please enter the verification code\n\nAdd ${challenge.offset} to each digit of current UTC+8 time in HH:MM format (4 digits), if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
           parse_mode: 'HTML'
         })
         return
@@ -666,8 +699,8 @@ async function forwardMessageU2A(message) {
         return
       }
       
-      // 验证答案
-      if (userAnswer === verificationState.answer) {
+      // 验证答案（允许±1分钟偏差）
+      if (verifyAnswer(userAnswer, verificationState.offset)) {
         // 验证成功
         await verificationCache.setVerification(user_id, 'verified', true)
         await verificationCache.deleteVerification(user_id, 'verification')
@@ -700,13 +733,14 @@ async function forwardMessageU2A(message) {
         await verificationCache.setVerification(user_id, 'verification', {
           challenge: challenge.challenge,
           answer: challenge.answer,
+          offset: challenge.offset,
           totalAttempts: newTotalAttempts,
           timestamp: Date.now()
         }, 120) // 120秒后自动过期
         
         await sendMessage({
           chat_id: chat_id,
-          text: `❌ 验证失败（${newTotalAttempts}/${VERIFICATION_MAX_ATTEMPTS}）\n\n🔐 请重新输入验证码\n\n验证码是以下四位数 ${challenge.challenge} 的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n⏰ 请在1分钟内回复验证码，否则将失效\n\n❌ Verification failed (${newTotalAttempts}/${VERIFICATION_MAX_ATTEMPTS})\n\n🔐 Please re-enter the verification code\n\nThe code is a 4-digit number. The answer is each digit of ${challenge.challenge} plus ${challenge.offset}, if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
+          text: `❌ 验证失败（${newTotalAttempts}/${VERIFICATION_MAX_ATTEMPTS}）\n\n🔐 请重新输入验证码\n\n将当前UTC+8时间的 时:分（HHMM格式）四位数字的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n⏰ 请在1分钟内回复验证码，否则将失效\n\n❌ Verification failed (${newTotalAttempts}/${VERIFICATION_MAX_ATTEMPTS})\n\n🔐 Please re-enter the verification code\n\nAdd ${challenge.offset} to each digit of current UTC+8 time in HH:MM format (4 digits), if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
           parse_mode: 'HTML'
         })
         return
