@@ -542,7 +542,7 @@ async function handleStart(message) {
         
         await sendMessage({
           chat_id: chat_id,
-          text: `${mentionHtml(user_id, user.first_name || user_id)}，欢迎使用！\n\n🔐 请输入验证码\n\n将当前UTC+8时间的 时:分（HHMM格式）四位数字的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n⏰ 请在1分钟内回复验证码，否则将失效\n\n${mentionHtml(user_id, user.first_name || user_id)}, Welcome!\n\n🔐 Please enter the verification code\n\nAdd ${challenge.offset} to each digit of current UTC+8 time in HH:MM format (4 digits), if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
+          text: `${mentionHtml(user_id, user.first_name || user_id)}，欢迎使用！\n\n🔐 请输入验证码\n\n将当前UTC+8时间的 时分（HHMM格式，仅数字）四位数字的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n⏰ 请在1分钟内回复验证码，否则将失效\n\n${mentionHtml(user_id, user.first_name || user_id)}, Welcome!\n\n🔐 Please enter the verification code\n\nAdd ${challenge.offset} to each digit of current UTC+8 time in HHMM format (4 digits), if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
           parse_mode: 'HTML'
         })
         return
@@ -651,7 +651,7 @@ async function forwardMessageU2A(message) {
         
         await sendMessage({
           chat_id: chat_id,
-          text: `🔐 请输入验证码\n\n将当前UTC+8时间的 时:分（HHMM格式）四位数字的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n⏰ 请在1分钟内回复验证码，否则将失效\n\n🔐 Please enter the verification code\n\nAdd ${challenge.offset} to each digit of current UTC+8 time in HH:MM format (4 digits), if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
+          text: `🔐 请输入验证码\n\n将当前UTC+8时间的 时分（HHMM格式，仅数字）四位数字的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n⏰ 请在1分钟内回复验证码，否则将失效\n\n🔐 Please enter the verification code\n\nAdd ${challenge.offset} to each digit of current UTC+8 time in HHMM format (4 digits), if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
           parse_mode: 'HTML'
         })
         return
@@ -740,7 +740,7 @@ async function forwardMessageU2A(message) {
         
         await sendMessage({
           chat_id: chat_id,
-          text: `❌ 验证失败（${newTotalAttempts}/${VERIFICATION_MAX_ATTEMPTS}）\n\n🔐 请重新输入验证码\n\n将当前UTC+8时间的 时:分（HHMM格式）四位数字的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n⏰ 请在1分钟内回复验证码，否则将失效\n\n❌ Verification failed (${newTotalAttempts}/${VERIFICATION_MAX_ATTEMPTS})\n\n🔐 Please re-enter the verification code\n\nAdd ${challenge.offset} to each digit of current UTC+8 time in HH:MM format (4 digits), if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
+          text: `❌ 验证失败（${newTotalAttempts}/${VERIFICATION_MAX_ATTEMPTS}）\n\n🔐 请重新输入验证码\n\n将当前UTC+8时间的 时分（HHMM格式，仅数字）四位数字的每一位数字加上 ${challenge.offset}，超过9则取个位数\n\n⏰ 请在1分钟内回复验证码，否则将失效\n\n❌ Verification failed (${newTotalAttempts}/${VERIFICATION_MAX_ATTEMPTS})\n\n🔐 Please re-enter the verification code\n\nAdd ${challenge.offset} to each digit of current UTC+8 time in HHMM format (4 digits), if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
           parse_mode: 'HTML'
         })
         return
