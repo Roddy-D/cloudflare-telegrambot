@@ -108,6 +108,7 @@
 
 - `ENV_WELCOME_MESSAGE`：欢迎消息，自行修改，默认为 欢迎使用机器人
 - `ENV_MESSAGE_INTERVAL`：消息间隔限制秒数，默认为 1。-1为不限制
+~~- `ENV_DELETE_TOPIC_AS_BAN`：删除话题视为永久封禁（true/false，不区分大小写），默认为 false。false 时只会删除话题，对方只需要再发送一次消息即可再次新建话题~~ （已弃用）
 - `ENV_ENABLE_VERIFICATION`：是否开启验证码功能（true/false，不区分大小写）。会在第一次开启聊天时自动发送
 - `ENV_VERIFICATION_MAX_ATTEMPTS`: 验证码最大尝试次数，默认为 10
 
