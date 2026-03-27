@@ -1,4 +1,4 @@
-// === Configuration variables (obtained from env) === 
+// === Configuration variables (obtained from env) === 
 let TOKEN = null
 let WEBHOOK = '/endpoint'
 let SECRET = null
@@ -103,6 +103,13 @@ function sendPhoto(msg = {}) {
 }
 
 /**
+ * Set message reaction (for bidirectional emoji reaction sync)
+ */
+function setMessageReaction(msg = {}) {
+  return requestTelegram('setMessageReaction', makeReqBody(msg))
+}
+
+/**
  * Verification code cache management (using Cache API)
  */
 class VerificationCache {
@@ -121,7 +128,7 @@ class VerificationCache {
       const cache = await caches.open(this.cacheName)
       const cacheUrl = this._getCacheUrl(user_id, key)
       const response = await cache.match(cacheUrl)
-      
+      
       if (!response) {
         return null
       }
@@ -139,17 +146,17 @@ class VerificationCache {
     try {
       const cache = await caches.open(this.cacheName)
       const cacheUrl = this._getCacheUrl(user_id, key)
-      
+      
       const headers = new Headers({
         'Content-Type': 'application/json',
-        'Cache-Control': expirationSeconds 
-          ? `max-age=${expirationSeconds}` 
+        'Cache-Control': expirationSeconds 
+          ? `max-age=${expirationSeconds}` 
           : 'max-age=86400' // Default 24 hours
       })
 
       const response = new Response(JSON.stringify(value), { headers })
       await cache.put(cacheUrl, response)
-      
+      
       return true
     } catch (error) {
       console.error('Error setting verification in cache:', error)
@@ -184,9 +191,9 @@ class Database {
     const result = await this.d1.prepare(
       'SELECT * FROM users WHERE user_id = ?'
     ).bind(user_id.toString()).first()
-    
+    
     if (!result) return null
-    
+    
     return {
       user_id: result.user_id,
       first_name: result.first_name,
@@ -200,8 +207,8 @@ class Database {
 
   async setUser(user_id, userData) {
     await this.d1.prepare(
-      `INSERT OR REPLACE INTO users 
-       (user_id, first_name, last_name, username, message_thread_id, created_at, updated_at) 
+      `INSERT OR REPLACE INTO users 
+       (user_id, first_name, last_name, username, message_thread_id, created_at, updated_at) 
        VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       user_id.toString(),
@@ -254,15 +261,15 @@ class Database {
     const result = await this.d1.prepare(
       'SELECT state_value, expiry_time FROM user_states WHERE user_id = ? AND state_key = ?'
     ).bind(user_id.toString(), key).first()
-    
+    
     if (!result) return null
-    
+    
     // Check if expired
     if (result.expiry_time && Date.now() > result.expiry_time) {
       await this.deleteUserState(user_id, key)
       return null
     }
-    
+    
     return JSON.parse(result.state_value)
   }
 
@@ -436,11 +443,11 @@ async function sendContactCard(chat_id, message_thread_id, user) {
     console.log(`Getting profile photos for user ${user.id}`)
     const userPhotos = await getUserProfilePhotos(user.id, 1)
     console.log(`Profile photos result:`, userPhotos)
-    
+    
     if (userPhotos.ok && userPhotos.result.total_count > 0) {
       const pic = userPhotos.result.photos[0][userPhotos.result.photos[0].length - 1].file_id
       console.log(`Sending photo with file_id: ${pic}`)
-      
+      
       const photoParams = {
         chat_id: chat_id,
         message_thread_id: message_thread_id,
@@ -448,16 +455,16 @@ async function sendContactCard(chat_id, message_thread_id, user) {
         caption: `👤 ${user.first_name || user.id}\n\n📱 ${user.id}\n\n🔗 ${user.username ? `Contact directly: @${user.username}` : `Contact directly: tg://user?id=${user.id}`}`,
         parse_mode: 'HTML'
       }
-        
+        
         console.log(`Sending photo with params:`, photoParams)
-        
+        
         const result = await sendPhoto(photoParams)
       console.log(`Photo send result:`, result)
-      
+      
       if (!result.ok) {
         console.error(`❌ Photo send failed:`, result)
       }
-      
+      
       return result
     } else {
       console.log(`No profile photo, sending text message`)
@@ -467,16 +474,16 @@ async function sendContactCard(chat_id, message_thread_id, user) {
         text: `👤 ${user.first_name || user.id}\n\n📱 ${user.id}\n\n🔗 ${user.username ? `Contact directly: @${user.username}` : `Contact directly: tg://user?id=${user.id}`}`,
         parse_mode: 'HTML'
       }
-        
+        
         console.log(`Sending text message with params:`, messageParams)
-        
+        
         const result = await sendMessage(messageParams)
       console.log(`Text send result:`, result)
-      
+      
       if (!result.ok) {
         console.error(`❌ Text message send failed:`, result)
       }
-      
+      
       return result
     }
   } catch (error) {
@@ -493,15 +500,15 @@ async function handleStart(message) {
   const user = message.from
   const user_id = user.id
   const chat_id = message.chat.id
-  
+  
   await updateUserDb(user)
-  
+  
   if (user_id.toString() === ADMIN_UID) {
     const commandList = `🤖 <b>Bot Management Commands</b>
 
 <b>Topic Management:</b>
 • /clear - Delete topic and clean up data
-• /del - Delete messages between the user and the bot (reply to the message to delete), only effective for messages within 48 hours, beyond 48 hours even if it prompts success it won't actually work
+• /del - Delete messages between the user and the bot (reply to the message to delete), only effective for messages within 48 hours
 
 <b>User Management:</b>
 • /block - Block user (use in topic)
@@ -511,13 +518,16 @@ async function handleStart(message) {
 <b>Message Management:</b>
 • /broadcast - Broadcast message (reply to the message to broadcast)
 
+<b>Sync Features:</b>
+• ✅ Bidirectional reaction emoji sync enabled
+
 <b>Configuration:</b>
 • Verification: ${ENABLE_VERIFICATION ? 'Enabled' : 'Disabled'}
 • Max verification attempts: ${VERIFICATION_MAX_ATTEMPTS} times
 • Message interval: ${MESSAGE_INTERVAL}s
 
 ✅ Bot is activated and running normally.`
-    
+    
     await sendMessage({
       chat_id: chat_id,  // Send to current chat (group or private)
       text: commandList,
@@ -528,7 +538,7 @@ async function handleStart(message) {
     if (ENABLE_VERIFICATION) {
       // Check if user is verified (using Cache API)
       const isVerified = await verificationCache.getVerification(user_id, 'verified')
-      
+      
       if (!isVerified) {
         // Not verified, send verification code
         const challenge = generateVerificationChallenge(user_id)
@@ -539,7 +549,7 @@ async function handleStart(message) {
           totalAttempts: 0,
           timestamp: Date.now()
         }, 120) // Auto-expire after 120 seconds
-        
+        
         await sendMessage({
           chat_id: chat_id,
           text: `${mentionHtml(user_id, user.first_name || user_id)}, Welcome!\n\n🔐 Please enter the verification code\n\nAdd ${challenge.offset} to each digit of current UTC+8 time in HHMM format (4 digits), if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
@@ -548,11 +558,11 @@ async function handleStart(message) {
         return
       }
     }
-    
+    
     // Already verified or verification not enabled, send welcome message
     await sendMessage({
       chat_id: chat_id,
-      text: `${mentionHtml(user_id, user.first_name || user_id)}:\n\n${WELCOME_MESSAGE}`,
+      text: `${mentionHtml(user_id, user.first_name || user_id)}：\n\n${WELCOME_MESSAGE}`,
       parse_mode: 'HTML'
     })
   }
@@ -576,10 +586,10 @@ function getUTC8TimeDigits(offsetMinutes = 0) {
 function generateVerificationChallenge(user_id) {
   // Get UTC+8 time HHMM as 4 digits
   const challengeDigits = getUTC8TimeDigits(0)
-  
+  
   // Randomly generate offset (1-9, avoid 0 as it has no effect)
   const offset = Math.floor(Math.random() * 9) + 1
-  
+  
   // Calculate correct answer
   let answer = ''
   for (let i = 0; i < challengeDigits.length; i++) {
@@ -587,7 +597,7 @@ function generateVerificationChallenge(user_id) {
     const newDigit = (digit + offset) % 10 // Keep only ones digit if over 9
     answer += newDigit.toString()
   }
-  
+  
   return {
     challenge: challengeDigits,
     answer: answer,
@@ -608,12 +618,12 @@ function verifyAnswer(userAnswer, offset) {
       const newDigit = (digit + offset) % 10
       correctAnswer += newDigit.toString()
     }
-    
+    
     if (userAnswer === correctAnswer) {
       return true
     }
   }
-  
+  
   return false
 }
 
@@ -635,7 +645,7 @@ async function forwardMessageU2A(message) {
       if (ENABLE_VERIFICATION) {
       const verificationState = await verificationCache.getVerification(user_id, 'verification')
       const isVerified = await verificationCache.getVerification(user_id, 'verified')
-      
+      
       // If user is not verified
       if (!isVerified) {
       // If verification challenge hasn't been sent yet, send it
@@ -648,7 +658,7 @@ async function forwardMessageU2A(message) {
           totalAttempts: 0,
           timestamp: Date.now()
         }, 120) // Auto-expire after 120 seconds
-        
+        
         await sendMessage({
           chat_id: chat_id,
           text: `🔐 Please enter the verification code\n\nAdd ${challenge.offset} to each digit of current UTC+8 time in HHMM format (4 digits), if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
@@ -656,23 +666,23 @@ async function forwardMessageU2A(message) {
         })
         return
       }
-      
+      
       // Check if verification code has expired (1 minute = 60000 milliseconds)
       const currentTime = Date.now()
       const verificationTime = verificationState.timestamp || 0
       const timeElapsed = currentTime - verificationTime
-      
+      
       if (timeElapsed > 60000) {
         // Verification code expired, delete verification data
         await verificationCache.deleteVerification(user_id, 'verification')
-        
+        
         await sendMessage({
           chat_id: chat_id,
           text: `⏰ Verification code expired\n\nYou did not reply within 1 minute, the code has expired.\n\nPlease send a new message to get a new verification code.`
         })
         return
       }
-      
+      
       // Check if maximum attempts reached
       const totalAttempts = verificationState.totalAttempts || 0
       if (totalAttempts >= VERIFICATION_MAX_ATTEMPTS) {
@@ -680,17 +690,17 @@ async function forwardMessageU2A(message) {
         await db.blockUser(user_id, true)
         // Mark as blocked due to verification limit exceeded
         await db.setUserState(user_id, 'verification_blocked', true)
-        
+        
         await sendMessage({
           chat_id: chat_id,
           text: `❌ Too many failed verification attempts (${VERIFICATION_MAX_ATTEMPTS} times), permanently blocked.`
         })
         return
       }
-      
+      
       // User has received challenge, check answer
       const userAnswer = message.text?.trim()
-      
+      
       if (!userAnswer) {
         await sendMessage({
           chat_id: chat_id,
@@ -698,13 +708,13 @@ async function forwardMessageU2A(message) {
         })
         return
       }
-      
+      
       // Verify answer (allow ±1 minute deviation)
       if (verifyAnswer(userAnswer, verificationState.offset)) {
         // Verification successful
         await verificationCache.setVerification(user_id, 'verified', true)
         await verificationCache.deleteVerification(user_id, 'verification')
-        
+        
         await sendMessage({
           chat_id: chat_id,
           text: `✅ Verification successful! You can now send messages.`
@@ -713,21 +723,21 @@ async function forwardMessageU2A(message) {
       } else {
         // Verification failed, increment attempts
         const newTotalAttempts = totalAttempts + 1
-        
+        
         // Check if limit reached
         if (newTotalAttempts >= VERIFICATION_MAX_ATTEMPTS) {
           // Permanently block user
           await db.blockUser(user_id, true)
           // Mark as blocked due to verification limit exceeded
           await db.setUserState(user_id, 'verification_blocked', true)
-          
+          
           await sendMessage({
             chat_id: chat_id,
             text: `❌ Maximum verification attempts reached (${VERIFICATION_MAX_ATTEMPTS} times), permanently blocked.`
           })
           return
         }
-        
+        
         // Generate new verification code
         const challenge = generateVerificationChallenge(user_id)
         await verificationCache.setVerification(user_id, 'verification', {
@@ -737,7 +747,7 @@ async function forwardMessageU2A(message) {
           totalAttempts: newTotalAttempts,
           timestamp: Date.now()
         }, 120) // Auto-expire after 120 seconds
-        
+        
         await sendMessage({
           chat_id: chat_id,
           text: `❌ Verification failed (${newTotalAttempts}/${VERIFICATION_MAX_ATTEMPTS})\n\n🔐 Please re-enter the verification code\n\nAdd ${challenge.offset} to each digit of current UTC+8 time in HHMM format (4 digits), if over 9, keep only the ones digit\n\n⏰ Please reply within 1 minute, or the code will expire`,
@@ -752,7 +762,7 @@ async function forwardMessageU2A(message) {
       if (MESSAGE_INTERVAL > 0) {
       const lastMessageTime = await db.getLastMessageTime(user_id)
       const currentTime = Date.now()
-      
+      
       if (currentTime < lastMessageTime + MESSAGE_INTERVAL * 1000) {
         const timeLeft = Math.ceil((lastMessageTime + MESSAGE_INTERVAL * 1000 - currentTime) / 1000)
         if (timeLeft > 0) {
@@ -787,7 +797,7 @@ async function forwardMessageU2A(message) {
       console.log(`User data not found for ${user_id}, retrying...`)
       await delay(100) // wait 100ms
       user_data = await db.getUser(user_id)
-      
+      
       if (!user_data) {
         // Still missing, create fallback data and save
         console.log(`Creating fallback user data for ${user_id}`)
@@ -805,12 +815,12 @@ async function forwardMessageU2A(message) {
     }
     let message_thread_id = user_data.message_thread_id
     console.log(`User ${user_id} data loaded, message_thread_id: ${message_thread_id}`)
-    
+    
     // Check topic status
     if (message_thread_id) {
       const topicStatus = await db.getTopicStatus(message_thread_id)
       console.log(`Topic ${message_thread_id} status check:`, topicStatus)
-      
+      
       if (topicStatus.status === 'closed') {
         await sendMessage({
           chat_id: chat_id,
@@ -838,15 +848,15 @@ async function forwardMessageU2A(message) {
         const topicName = `${user.first_name || 'User'}|${user_id}`.substring(0, 128)
         console.log(`Topic name: ${topicName}`)
         const forumTopic = await createForumTopic(ADMIN_GROUP_ID, topicName)
-        
+        
         if (forumTopic.ok) {
           message_thread_id = forumTopic.result.message_thread_id
           user_data.message_thread_id = message_thread_id
           await db.setUser(user_id, user_data)
           await db.setTopicStatus(message_thread_id, 'opened')
-          
+          
           console.log(`✅ Created new topic ${message_thread_id} for user ${user_id}`)
-          
+          
           // Send contact card
           console.log(`📱 Sending contact card for user ${user_id} to topic ${message_thread_id}`)
           console.log(`User object:`, {
@@ -855,7 +865,7 @@ async function forwardMessageU2A(message) {
             last_name: user.last_name,
             username: user.username
           })
-          
+          
           try {
             const contactResult = await sendContactCard(ADMIN_GROUP_ID, message_thread_id, user)
             if (contactResult && contactResult.ok) {
@@ -869,7 +879,7 @@ async function forwardMessageU2A(message) {
         } else {
           await sendMessage({
             chat_id: chat_id,
-            text: 'Failed to create a conversation. Please try again later or contact the recipient.'  
+            text: 'Failed to create a conversation. Please try again later or contact the recipient.'  
           })
           return
         }
@@ -884,12 +894,12 @@ async function forwardMessageU2A(message) {
     }
 
     console.log(`Final message_thread_id before forwarding: ${message_thread_id}`)
-    
+    
     // 7. Handle message forwarding
     console.log(`Starting message forwarding to topic ${message_thread_id}`)
     try {
       const params = { message_thread_id: message_thread_id }
-      
+      
       // Handle reply message
       if (message.reply_to_message) {
         console.log(`User replying to message: ${message.reply_to_message.message_id}`)
@@ -909,7 +919,7 @@ async function forwardMessageU2A(message) {
         message_id: message.message_id,
         ...params
       })
-      
+      
       let sent
       try {
         sent = await copyMessage({
@@ -929,28 +939,33 @@ async function forwardMessageU2A(message) {
         })
         throw copyError // Re-throw for outer catch
       }
-      
+      
       if (sent && sent.ok) {
         await db.setMessageMap(`u2a:${message.message_id}`, sent.result.message_id)
         await db.setMessageMap(`a2u:${sent.result.message_id}`, message.message_id)
+        // Store admin group msg ID -> user ID mapping (for reaction sync to locate user)
+        await db.setMessageMap(`msg2user:${sent.result.message_id}`, user_id)
+        // Store user msg ID -> user ID mapping (for reverse reaction sync)
+        await db.setMessageMap(`msg2user:u:${message.message_id}`, user_id)
         console.log(`✅ Forwarded u2a: user(${user_id}) msg(${message.message_id}) -> group msg(${sent.result.message_id})`)
         console.log(`✅ Stored mapping: u2a:${message.message_id} -> ${sent.result.message_id}`)
         console.log(`✅ Stored mapping: a2u:${sent.result.message_id} -> ${message.message_id}`)
+        console.log(`✅ Stored mapping: msg2user:${sent.result.message_id} -> ${user_id}`)
         // Send delivered notice (once per day), then delete after 3s
         await maybeSendDeliveredNotice(user_id, chat_id, { reply_to_message_id: message.message_id })
       } else {
         console.error(`❌ copyMessage failed, sent.ok = false`)
         console.error(`❌ copyMessage response:`, sent)
-        
+        
         // Check whether it is a topic-deleted error
         const errorText = (sent.description || '').toLowerCase()
         console.log(`🔍 Checking copyMessage error text: "${errorText}"`)
-        
-        if (errorText.includes('message thread not found') || 
-            errorText.includes('topic deleted') || 
+        
+        if (errorText.includes('message thread not found') || 
+            errorText.includes('topic deleted') || 
             errorText.includes('thread not found') ||
             errorText.includes('topic not found')) {
-          
+          
           // Create an error to trigger deletion handling
           const deleteError = new Error('Topic deleted')
           deleteError.description = sent.description || 'Topic deleted'
@@ -966,34 +981,34 @@ async function forwardMessageU2A(message) {
         ok: error.ok,
         stack: error.stack
       })
-      
+      
       // Check whether the topic was deleted (case-insensitive)
       const errorText = (error.description || error.message || '').toLowerCase()
       console.log(`🔍 Checking error text for topic deletion: "${errorText}"`)
       console.log(`🔍 Full error object:`, error)
-      
-      const isTopicDeletedError = errorText.includes('message thread not found') || 
-          errorText.includes('topic deleted') || 
+      
+      const isTopicDeletedError = errorText.includes('message thread not found') || 
+          errorText.includes('topic deleted') || 
           errorText.includes('thread not found') ||
           errorText.includes('topic not found') ||
           (errorText.includes('chat not found') && errorText.includes(ADMIN_GROUP_ID))
-      
+      
       console.log(`🔍 Is topic deleted error: ${isTopicDeletedError}`)
-      
+      
       if (isTopicDeletedError) {
-        
+        
         // Topic deleted, clean up data
         const oldThreadId = user_data.message_thread_id
         user_data.message_thread_id = null
         await db.setUser(user_id, user_data)
-        
+        
         // Clean up topic status record
         if (oldThreadId) {
           await db.setTopicStatus(oldThreadId, 'removed')
         }
-        
+        
         console.log(`Topic ${oldThreadId} seems deleted. Cleared thread_id for user ${user_id}`)
-        
+        
         await sendMessage({
           chat_id: chat_id,
           text: 'Send failed: your previous conversation was deleted. Please resend the current message.'
@@ -1005,10 +1020,10 @@ async function forwardMessageU2A(message) {
         })
       }
     }
-    
+    
   } catch (error) {
     console.error('❌ Error in forwardMessageU2A:', error)
-    
+    
     // Generic handling for other errors
     await sendMessage({
       chat_id: chat_id,
@@ -1051,7 +1066,7 @@ async function forwardMessageA2U(message) {
   // Forward message to user
   try {
     const params = {}
-    
+    
     // Handle reply message
     if (message.reply_to_message) {
       console.log(`Admin replying to message: ${message.reply_to_message.message_id}`)
@@ -1070,17 +1085,22 @@ async function forwardMessageA2U(message) {
       message_id: message.message_id,
       ...params
     })
-    
+    
     if (sent.ok) {
       await db.setMessageMap(`a2u:${message.message_id}`, sent.result.message_id)
       await db.setMessageMap(`u2a:${sent.result.message_id}`, message.message_id)
+      // Store admin group msg ID -> user ID mapping (for reaction sync to locate user)
+      await db.setMessageMap(`msg2user:${message.message_id}`, target_user.user_id)
+      // Store user msg ID -> user ID mapping (for reverse reaction sync)
+      await db.setMessageMap(`msg2user:u:${sent.result.message_id}`, target_user.user_id)
       console.log(`Forwarded a2u: group msg(${message.message_id}) -> user(${target_user.user_id})`)
       console.log(`Stored mapping: a2u:${message.message_id} -> ${sent.result.message_id}`)
       console.log(`Stored mapping: u2a:${sent.result.message_id} -> ${message.message_id}`)
+      console.log(`Stored mapping: msg2user:${message.message_id} -> ${target_user.user_id}`)
     }
   } catch (error) {
     console.error('Error forwarding message a2u:', error)
-    
+    
     if (error.description && (error.description.includes('bot was blocked') || error.description.includes('user is deactivated'))) {
       await sendMessage({
         chat_id: message.chat.id,
@@ -1114,9 +1134,9 @@ async function findUserByThreadId(thread_id) {
 async function handleEditedMessage(edited_message, is_from_user = true) {
   const direction = is_from_user ? 'u2a' : 'a2u'
   const opposite_direction = is_from_user ? 'a2u' : 'u2a'
-  
+  
   console.log(`Processing edited message: ${edited_message.message_id}, is_from_user: ${is_from_user}`)
-  
+  
   const mapped_message_id = await db.getMessageMap(`${direction}:${edited_message.message_id}`)
   if (!mapped_message_id) {
     console.debug(`No mapping found for edited message ${edited_message.message_id}`)
@@ -1134,17 +1154,17 @@ async function handleEditedMessage(edited_message, is_from_user = true) {
       console.debug(`No message_thread_id found for admin edited message ${edited_message.message_id}`)
       return
     }
-    
+    
     const target_user = await findUserByThreadId(message_thread_id)
     if (!target_user) {
       console.debug(`No user found for thread ${message_thread_id}`)
       return
     }
-    
+    
     target_chat_id = target_user.user_id
     console.log(`Admin edited message ${edited_message.message_id} will sync to user ${target_user.user_id}`)
   }
-  
+  
   try {
     if (edited_message.text) {
       await editMessage({
@@ -1161,7 +1181,7 @@ async function handleEditedMessage(edited_message, is_from_user = true) {
         parse_mode: 'HTML'
       })
     }
-    
+    
     console.log(`Synced edit: ${direction} msg(${edited_message.message_id}) -> ${opposite_direction} msg(${mapped_message_id}) to chat ${target_chat_id}`)
   } catch (error) {
     if (error.description && error.description.includes('Message is not modified')) {
@@ -1169,6 +1189,139 @@ async function handleEditedMessage(edited_message, is_from_user = true) {
     } else {
       console.error('Error syncing edited message:', error)
     }
+  }
+}
+
+/**
+ * Handle bidirectional reaction sync
+ * 
+ * message_reaction update structure:
+ * {
+ *   chat: { id, type, ... },
+ *   message_id: number,
+ *   user: { id, first_name, ... },  // present in private/group chats
+ *   actor_chat: { ... },             // present for anonymous reactions
+ *   date: number,
+ *   old_reaction: [ { type, emoji/custom_emoji_id } ],
+ *   new_reaction: [ { type, emoji/custom_emoji_id } ]
+ * }
+ */
+async function handleMessageReaction(message_reaction) {
+  const chat = message_reaction.chat
+  const message_id = message_reaction.message_id
+  const new_reaction = message_reaction.new_reaction || []
+  const user = message_reaction.user
+
+  console.log(`🔄 Reaction update: chat=${chat.id}, msg=${message_id}, new_reaction=${JSON.stringify(new_reaction)}, user=${user?.id}`)
+
+  try {
+    if (chat.type === 'private') {
+      // ======== User -> Admin direction ========
+      // User reacted to a message in private chat, sync to admin group
+      const mapped_message_id = await db.getMessageMap(`u2a:${message_id}`)
+      if (!mapped_message_id) {
+        console.log(`⚠️ No u2a mapping found for reaction on message ${message_id}`)
+        return
+      }
+
+      // Filter out paid reactions (bots cannot use paid reactions)
+      const filteredReaction = new_reaction.filter(r => r.type !== 'paid')
+
+      // Bot (non-premium) can only set up to 1 reaction per message
+      // Take the latest one (last in array); if empty, clear the reaction
+      const reactionToSet = filteredReaction.length > 0
+        ? [filteredReaction[filteredReaction.length - 1]]
+        : []
+
+      const result = await setMessageReaction({
+        chat_id: ADMIN_GROUP_ID,
+        message_id: mapped_message_id,
+        reaction: reactionToSet
+      })
+
+      if (result.ok) {
+        console.log(`✅ Synced reaction u2a: user msg(${message_id}) -> group msg(${mapped_message_id}), reaction: ${JSON.stringify(reactionToSet)}`)
+      } else {
+        console.error(`❌ Failed to sync reaction u2a:`, result)
+      }
+
+    } else if (chat.id.toString() === ADMIN_GROUP_ID) {
+      // ======== Admin -> User direction ========
+      // Admin reacted to a message in admin group, sync to user's private chat
+
+      // Ignore bot's own reaction updates (prevent loops)
+      if (user && user.is_bot) {
+        console.log(`⏭️ Ignoring bot's own reaction update`)
+        return
+      }
+
+      const mapped_message_id = await db.getMessageMap(`a2u:${message_id}`)
+      if (!mapped_message_id) {
+        console.log(`⚠️ No a2u mapping found for reaction on message ${message_id}`)
+        return
+      }
+
+      // Find target user via message_id mapping
+      // Since a2u mapping value is user-side message_id, we need to know which user
+      // Method: find user by thread_id match (since message_reaction has no thread_id,
+      // but we can reverse-lookup u2a mapping to determine user)
+      // Better method: store extra msg2user mapping, but to avoid changing DB schema,
+      // we verify user-side message exists via u2a:{mapped_message_id}
+      const reverse_check = await db.getMessageMap(`u2a:${mapped_message_id}`)
+      if (!reverse_check) {
+        console.log(`⚠️ Reverse mapping u2a:${mapped_message_id} not found`)
+        return
+      }
+
+      // Find user: mapped_message_id is user-side message_id
+      // We need to find which user (which chat_id) this message belongs to
+      // Iterate all users to check which has an active topic
+      // Note: message_reaction update may contain message_thread_id in groups (if forum)
+      // But Bot API MessageReactionUpdated may not have message_thread_id in supergroups
+      // Here we need another strategy: store admin msg -> user_id mapping
+
+      // Strategy: iterate all users to find correspondence
+      // Find user by admin group message ID
+      // Using existing mappings: a2u:{admin_msg} -> user_msg
+      // and u2a:{user_msg} -> admin_msg (reverse confirmation)
+      // Find user: check which user's chat has mapped_message_id
+      // Actually we can get thread_id from message_reaction chat context
+
+      // In forum/topic groups, Bot API message_reaction event does not provide message_thread_id
+      // So we need another way to locate the user
+      // Solution: store extra admin msg ID -> user ID mapping during message forwarding
+
+      // Use msg2user mapping (stored during message forwarding)
+      const target_user_id = await db.getMessageMap(`msg2user:${message_id}`)
+      if (!target_user_id) {
+        // Fallback: try to find via all users
+        console.log(`⚠️ No msg2user mapping for ${message_id}, trying fallback...`)
+        
+        // Iterating users is less efficient
+        // Better to ensure msg2user mapping exists
+        return
+      }
+
+      // Filter out paid reactions
+      const filteredReaction = new_reaction.filter(r => r.type !== 'paid')
+      const reactionToSet = filteredReaction.length > 0
+        ? [filteredReaction[filteredReaction.length - 1]]
+        : []
+
+      const result = await setMessageReaction({
+        chat_id: target_user_id,
+        message_id: mapped_message_id,
+        reaction: reactionToSet
+      })
+
+      if (result.ok) {
+        console.log(`✅ Synced reaction a2u: group msg(${message_id}) -> user(${target_user_id}) msg(${mapped_message_id}), reaction: ${JSON.stringify(reactionToSet)}`)
+      } else {
+        console.error(`❌ Failed to sync reaction a2u:`, result)
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error handling message reaction:', error)
   }
 }
 
@@ -1201,22 +1354,22 @@ async function handleClearCommand(message) {
   try {
     // Find related user
     const target_user = await findUserByThreadId(message_thread_id)
-    
+    
     // Delete topic
     await deleteForumTopic(ADMIN_GROUP_ID, message_thread_id)
     console.log(`Admin ${user.id} cleared topic ${message_thread_id}`)
-    
+    
     // Clean up database
     if (target_user) {
       target_user.message_thread_id = null
       await db.setUser(target_user.user_id, target_user)
-      
+      
       // D1 version: Delete message mapping records
       await db.deleteUserMessageMappings(target_user.user_id)
     }
-    
+    
     await db.setTopicStatus(message_thread_id, 'deleted')
-    
+    
   } catch (error) {
     console.error('Error clearing topic:', error)
     await sendMessage({
@@ -1233,7 +1386,7 @@ async function handleClearCommand(message) {
  */
 async function handleBroadcastCommand(message) {
   const user = message.from
-  
+  
   if (user.id.toString() !== ADMIN_UID) {
     await sendMessage({
       chat_id: message.chat.id,
@@ -1253,20 +1406,20 @@ async function handleBroadcastCommand(message) {
   }
 
   const broadcastMessage = message.reply_to_message
-  
+  
   // Send confirmation message immediately
   await sendMessage({
     chat_id: message.chat.id,
     text: `📢 Broadcast task started. Message ID to broadcast: ${broadcastMessage.message_id}`,
     reply_to_message_id: message.message_id
   })
-  
+  
   // Use a Promise instead of setTimeout to avoid issues in Workers
   const broadcastPromise = (async () => {
     try {
       const users = await db.getAllUsers()
       const activeUsers = users.filter(u => u.message_thread_id)
-      
+      
       if (activeUsers.length === 0) {
         await sendMessage({
           chat_id: message.chat.id,
@@ -1275,13 +1428,13 @@ async function handleBroadcastCommand(message) {
         })
         return
       }
-      
+      
       let success = 0
       let failed = 0
       let blocked = 0
-      
+      
       console.log(`Starting broadcast to ${activeUsers.length} users`)
-      
+      
       for (const user of activeUsers) {
         try {
           await copyMessage({
@@ -1300,9 +1453,9 @@ async function handleBroadcastCommand(message) {
           }
         }
       }
-      
+      
       console.log(`Broadcast completed: ${success} success, ${failed} failed, ${blocked} blocked`)
-      
+      
       // Fix: send results to admin group instead of admin DM
       await sendMessage({
         chat_id: message.chat.id,
@@ -1318,7 +1471,7 @@ async function handleBroadcastCommand(message) {
       })
     }
   })()
-  
+  
   // In Workers, use event.waitUntil to ensure async completes
   // We cannot access event here, so rely on the Promise
   return broadcastPromise
@@ -1382,10 +1535,10 @@ async function handleDeleteCommand(message) {
   try {
     // Delete user-side message
     await deleteMessage(target_user.user_id, user_message_id)
-    
+    
     // Delete the command message itself
     await deleteMessage(message.chat.id, message.message_id)
-    
+    
     // Send success notification
     await sendMessage({
       chat_id: message.chat.id,
@@ -1393,7 +1546,7 @@ async function handleDeleteCommand(message) {
       text: '✅ User-side message deleted.',
       reply_to_message_id: admin_message_id
     })
-    
+    
     console.log(`Admin deleted message: admin_msg(${admin_message_id}) -> user_msg(${user_message_id})`)
   } catch (error) {
     console.error('Error deleting message:', error)
@@ -1471,7 +1624,7 @@ async function handleUnblockCommand(message) {
   const commandMatch = message.text?.match(/^\/unblock\s+(\d+)/)
   if (commandMatch) {
     const target_user_id = commandMatch[1]
-    
+    
     // Check if the user exists
     const target_user = await db.getUser(target_user_id)
     if (!target_user) {
@@ -1568,7 +1721,7 @@ async function handleCheckBlockCommand(message) {
     const isBlocked = await db.isUserBlocked(target_user.user_id)
     const verificationBlockedState = await db.getUserState(target_user.user_id, 'verification_blocked')
     const isVerificationBlocked = isBlocked && verificationBlockedState === true
-    const statusText = isBlocked 
+    const statusText = isBlocked 
       ? `Blocked${isVerificationBlocked ? ' (Verification limit exceeded)' : ''}`
       : 'Not blocked'
     await sendMessage({
@@ -1584,7 +1737,7 @@ async function handleCheckBlockCommand(message) {
   try {
     const allUsers = await db.getAllUsers()
     const blockedUsers = []
-    
+    
     for (const u of allUsers) {
       const isBlocked = await db.isUserBlocked(u.user_id)
       if (isBlocked) {
@@ -1602,14 +1755,14 @@ async function handleCheckBlockCommand(message) {
     }
 
     const MAX_MESSAGE_LENGTH = 3900 // Leave more margin
-    
+    
     let messages = []
     let currentMessage = `🚫 <b>Blocked Users List</b> (Total: ${blockedUsers.length})\n\n`
     let partNumber = 1
-    
+    
     // Batch fetch verification states
     const verificationStates = await Promise.all(
-      blockedUsers.map(u => 
+      blockedUsers.map(u => 
         db.getUserState(u.user_id, 'verification_blocked')
           .catch(err => {
             console.error(`Failed to get state for user ${u.user_id}:`, err)
@@ -1617,7 +1770,7 @@ async function handleCheckBlockCommand(message) {
           })
       )
     )
-    
+    
     for (let i = 0; i < blockedUsers.length; i++) {
       const u = blockedUsers[i]
       const userName = u.first_name || 'Unknown'
@@ -1625,16 +1778,16 @@ async function handleCheckBlockCommand(message) {
       const verificationBlockedState = verificationStates[i]
       const mark = verificationBlockedState === true ? ' [Verification limit exceeded]' : ''
       let userLine = `• ${userName} (${userInfo})${mark}\n`
-      
+      
       // Handle overly long single lines
       if (userLine.length > MAX_MESSAGE_LENGTH - 100) {
         const maxNameLength = 50
-        const truncatedName = userName.length > maxNameLength 
-          ? userName.substring(0, maxNameLength) + '...' 
+        const truncatedName = userName.length > maxNameLength 
+          ? userName.substring(0, maxNameLength) + '...' 
           : userName
         userLine = `• ${truncatedName} (${userInfo})${mark}\n`
       }
-      
+      
       // Check if segmentation is needed
       if (currentMessage.length + userLine.length > MAX_MESSAGE_LENGTH) {
         // Ensure there's at least some content
@@ -1644,20 +1797,20 @@ async function handleCheckBlockCommand(message) {
           currentMessage = `🚫 <b>Blocked Users List</b> (Part ${partNumber})\n\n`
         }
       }
-      
+      
       currentMessage += userLine
     }
-    
+    
     // Add the last part
     if (currentMessage.trim() && currentMessage.split('\n').length > 2) {
       messages.push(currentMessage.trim())
     }
-    
+    
     // If no users
     if (messages.length === 0) {
       messages.push('🚫 <b>Blocked Users List</b>\n\nNo blocked users.')
     }
-    
+    
     // Send in parts with delay to avoid rate limiting
     for (let i = 0; i < messages.length; i++) {
       try {
@@ -1667,7 +1820,7 @@ async function handleCheckBlockCommand(message) {
           parse_mode: 'HTML',
           reply_to_message_id: i === 0 ? message.message_id : undefined
         })
-        
+        
         // Avoid sending too fast
         if (i < messages.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 100))
@@ -1704,7 +1857,7 @@ async function onUpdate(update) {
       // Handle commands from admin (support both admin group and private chat, support @botname format)
       if (user.id.toString() === ADMIN_UID && (chat_id.toString() === ADMIN_GROUP_ID || message.chat.type === 'private')) {
         const commandText = message.text?.split('@')[0] || '' // Extract command part, remove @botname
-        
+        
         if (commandText === '/clear') {
           return await handleClearCommand(message)
         }
@@ -1749,16 +1902,21 @@ async function onUpdate(update) {
     if (update.edited_message) {
       const edited_message = update.edited_message
       const chat_id = edited_message.chat.id
-      
+      
       if (edited_message.chat.type === 'private') {
         // User edited message
         return await handleEditedMessage(edited_message, true)
       }
-      
+      
       if (chat_id.toString() === ADMIN_GROUP_ID) {
         // Admin edited message
         return await handleEditedMessage(edited_message, false)
       }
+    }
+
+    // Handle reaction updates (bidirectional sync)
+    if (update.message_reaction) {
+      return await handleMessageReaction(update.message_reaction)
     }
   } catch (error) {
     console.error('Error processing update:', error)
@@ -1776,7 +1934,7 @@ async function handleWebhook(event) {
 
   // Read update
   const update = await event.request.json()
-  
+  
   // Process update asynchronously
   event.waitUntil(onUpdate(update))
 
@@ -1788,15 +1946,15 @@ async function handleWebhook(event) {
  */
 async function registerWebhook(event, requestUrl, suffix, secret) {
   const webhookUrl = `${requestUrl.protocol}//${requestUrl.hostname}${suffix}`
-  
+  
   // Debug info
   console.log('🔧 Webhook registration details:')
   console.log('TOKEN:', TOKEN ? `first 10 chars: ${TOKEN.slice(0, 10)}...` : '❌ not set')
   console.log('SECRET:', secret ? '✅ set' : '❌ not set')
   console.log('Webhook URL:', webhookUrl)
   console.log('API URL:', apiUrl('setWebhook'))
-  
-  // Register webhook
+  
+  // Register webhook (includes message_reaction for bidirectional reaction sync)
   const r = await fetch(apiUrl('setWebhook'), {
     method: 'POST',
     headers: {
@@ -1805,13 +1963,13 @@ async function registerWebhook(event, requestUrl, suffix, secret) {
     body: JSON.stringify({
       url: webhookUrl,
       secret_token: secret,
-      allowed_updates: ['message', 'edited_message']
+      allowed_updates: ['message', 'edited_message', 'message_reaction']
     }),
   })
 
   const result = await r.json()
   console.log('📡 Telegram API response:', result)
-  
+  
   // Register bot commands (only /start is visible, other commands are hidden)
   try {
     const commandsResult = await fetch(apiUrl('setMyCommands'), {
@@ -1833,7 +1991,7 @@ async function registerWebhook(event, requestUrl, suffix, secret) {
   } catch (error) {
     console.error('❌ Commands registration failed:', error)
   }
-  
+  
   return new Response(JSON.stringify(result, null, 2), {
     headers: { 'content-type': 'application/json' }
   })
@@ -1902,7 +2060,7 @@ async function initDatabase(d1) {
     'CREATE INDEX IF NOT EXISTS idx_mappings_key ON message_mappings(mapping_key)',
     'CREATE INDEX IF NOT EXISTS idx_states_expiry ON user_states(expiry_time)'
   ]
-  
+  
   try {
     // Use batch to execute all statements
     const preparedStatements = statements.map(sql => d1.prepare(sql))
@@ -1921,14 +2079,14 @@ export default {
   async fetch(request, env, ctx) {
     // Initialize configuration variables
     initConfig(env)
-    
+    
     // Initialize database connection
     if (!db && env.D1) {
       db = new Database(env.D1)
     }
-    
+    
     const url = new URL(request.url)
-    
+    
     if (url.pathname === WEBHOOK) {
       return await handleWebhook({ request, waitUntil: ctx.waitUntil.bind(ctx) })
     } else if (url.pathname === '/registerWebhook') {
@@ -1938,12 +2096,12 @@ export default {
     } else if (url.pathname === '/initDatabase') {
       try {
         await initDatabase(env.D1)
-        return new Response('✅ Database initialized successfully', { 
+        return new Response('✅ Database initialized successfully', { 
           status: 200,
           headers: { 'Content-Type': 'text/plain; charset=utf-8' }
         })
       } catch (error) {
-        return new Response(`❌ Database initialization failed: ${error.message}`, { 
+        return new Response(`❌ Database initialization failed: ${error.message}`, { 
           status: 500,
           headers: { 'Content-Type': 'text/plain; charset=utf-8' }
         })
@@ -1953,3 +2111,4 @@ export default {
     }
   }
 }
+
