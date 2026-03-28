@@ -25,6 +25,7 @@ This project is a Telegram message forwarding bot based on Cloudflare Worker and
 - **Contact Card**: Automatically displays user avatar (if any) and direct contact info
 - **Broadcast Function**: Send notifications to all active users
 - **Verification Code**: Verify identity the first time you open a chat. Messages will only be allowed after verification. Exceeding attempts will result in blocking
+- **Reaction forwarding**
 
 > 💡 **D1 Version Advantage**: D1 has 100,000 daily write quota (100 times that of KV), making it almost impossible to exhaust
 
@@ -246,4 +247,4 @@ The Worker automatically creates the following 6 tables:
 - Cloudflare Workers Team – For the excellent serverless platform
 - Telegram Bot API – For the powerful bot framework
 
-**Note**: This project is for learning and research purposes only. Please comply with relevant laws and platform terms. If you find bugs, you can [contact via Telegram](https://t.me/horrorself_bot) for feedback.
+**Note**: This project is for learning and research purposes only. Please comply with relevant laws and platform terms. If you find bugs, you can [contact via Telegram](https://t.me/uscybersecbot) for feedback.
