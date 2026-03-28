@@ -249,4 +249,4 @@ Worker 会自动创建以下 6 张表：
 - Cloudflare Workers 团队 - 提供优秀的无服务器平台
 - Telegram Bot API - 提供强大的机器人开发接口
 
-**注意**：本项目仅供学习和研究使用，请遵守相关法律法规和平台使用条款。如有bug可以 [tg联系](https://t.me/horrorself_bot) 进行反馈
+**注意**：本项目仅供学习和研究使用，请遵守相关法律法规和平台使用条款。如有bug可以 [tg联系](https://t.me/uscybersecbot) 进行反馈
