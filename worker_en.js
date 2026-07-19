@@ -2017,8 +2017,7 @@ async function unRegisterWebhook(event) {
  */
 async function initDatabase(d1) {
   const statements = [
-    // Create tables (all as single-line SQL to avoid D1's parsing issue
-    // with multi-line / indented template-literal SQL strings)
+    // Create tables (all as single-line SQL to avoid D1's parsing issue with multi-line / indented template-literal SQL strings)
     'CREATE TABLE IF NOT EXISTS users (user_id TEXT PRIMARY KEY, first_name TEXT, last_name TEXT, username TEXT, message_thread_id INTEGER, created_at INTEGER, updated_at INTEGER)',
     'CREATE TABLE IF NOT EXISTS message_mappings (mapping_key TEXT PRIMARY KEY, mapped_value INTEGER, created_at INTEGER)',
     'CREATE TABLE IF NOT EXISTS topic_status (thread_id INTEGER PRIMARY KEY, status TEXT DEFAULT \'opened\', updated_at INTEGER)',
